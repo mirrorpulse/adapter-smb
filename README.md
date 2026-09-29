@@ -2,8 +2,8 @@
 
 This is the official repository for the MirrorPulse SMB Adapter.
 
-The repository currently contains the independently buildable Adapter SDK, a sample Worker, and the package skeleton inherited from [adapter-template](https://github.com/MirrorPulse/adapter-template). The SMB protocol Worker has not yet been moved into this repository. The example manifest is a template and is not a releasable official package.
+The repository contains the independently buildable Adapter SDK and an SMB protocol Worker. The Worker runs in its own process over the current-user Named Pipe protocol, confines paths to the configured UNC share, supports bounded range reads, conditional staged uploads, and transfer-cache cleanup for x64 and ARM64 packages.
 
-Run `pwsh ./eng/verify.ps1` to validate the current scaffold. No signed `.mpadapter` release has been published from this repository.
+Run `pwsh ./eng/verify.ps1` to validate the SDK and Worker. Signed releases are produced by the repository workflow.
 
 Licensed under Apache-2.0. See [LICENSE](LICENSE).

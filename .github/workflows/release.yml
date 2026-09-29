@@ -17,7 +17,7 @@ permissions:
 env:
   ADAPTER_ID: 'com.mirrorpulse.adapter.smb'
   ADAPTER_LABEL: 'SMB'
-  WORKER_PROJECT: 'samples/MirrorPulse.Adapter.SampleWorker/MirrorPulse.Adapter.SampleWorker.csproj'
+  WORKER_PROJECT: 'src/MirrorPulse.Adapter.Smb.Worker/MirrorPulse.Adapter.Smb.Worker.csproj'
 
 jobs:
   release:
