@@ -1,5 +1,6 @@
-using System.Security.Cryptography;
 using System.Text.Json;
+using System.Globalization;
+using System.Security.Cryptography;
 using MirrorPulse.Adapter.Sdk;
 
 namespace MirrorPulse.Adapter.Smb.Worker;
@@ -90,6 +91,11 @@ internal sealed class SmbWorkerPaths
             throw new InvalidDataException("The SMB path escaped the configured share.");
         return path;
     }
+
+    public string Root => _root.TrimEnd(Path.DirectorySeparatorChar);
+
+    public string ResolveDirectory(string relativePath) =>
+        string.IsNullOrEmpty(relativePath) ? Root : Resolve(relativePath);
 }
 
 internal sealed class SmbTransferProtocol(AdapterControlChannel channel, SmbWorkerPaths paths,
@@ -106,6 +112,7 @@ internal sealed class SmbTransferProtocol(AdapterControlChannel channel, SmbWork
                 case "Stat": await StatAsync(command, cancellationToken); break;
                 case "ReadRange": await ReadRangeAsync(command, cancellationToken); break;
                 case "Upload": await UploadAsync(command, cancellationToken); break;
+                case "List": await ListAsync(command, cancellationToken); break;
                 default: throw new InvalidDataException("The SMB Worker received an unsupported command.");
             }
         }
@@ -129,6 +136,59 @@ internal sealed class SmbTransferProtocol(AdapterControlChannel channel, SmbWork
         }
         await channel.SendAsync("StatResult", command.RequestId, true,
             new { revision = Revision(file), length = new FileInfo(file).Length }, cancellationToken);
+    }
+
+    private async Task ListAsync(AdapterControlFrame command, CancellationToken cancellationToken)
+    {
+        string path = command.Payload.GetProperty("path").GetString() ?? string.Empty;
+        int pageSize = command.Payload.GetProperty("pageSize").GetInt32();
+        if (pageSize is < 1 or > 512) throw new InvalidDataException("Page size invalid.");
+        int offset = ParseCursor(command.Payload);
+        string directory = paths.ResolveDirectory(path);
+        string[] children = Directory.EnumerateFileSystemEntries(directory)
+            .OrderBy(item => Path.GetFileName(item), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => Path.GetFileName(item), StringComparer.Ordinal)
+            .ToArray();
+        if (offset > children.Length) throw new InvalidDataException("Cursor is past the directory.");
+        var entries = new List<object>(Math.Min(pageSize, children.Length - offset));
+        foreach (string child in children.Skip(offset).Take(pageSize))
+        {
+            bool isDirectory = Directory.Exists(child);
+            FileInfo? file = isDirectory ? null : new FileInfo(child);
+            string relative = Path.GetRelativePath(paths.Root, child).Replace(Path.DirectorySeparatorChar, '/');
+            DateTime creation = File.GetCreationTimeUtc(child);
+            DateTime lastWrite = File.GetLastWriteTimeUtc(child);
+            entries.Add(new
+            {
+                remoteId = relative,
+                remoteRevision = isDirectory ? lastWrite.Ticks.ToString(CultureInfo.InvariantCulture) : Revision(child),
+                itemKind = isDirectory ? "Directory" : "File",
+                relativePath = relative,
+                length = file?.Length,
+                creationTime = new DateTimeOffset(creation, TimeSpan.Zero),
+                lastWriteTime = new DateTimeOffset(lastWrite, TimeSpan.Zero),
+                isDeleted = false,
+            });
+        }
+
+        int next = offset + entries.Count;
+        bool complete = next >= children.Length;
+        await channel.SendAsync("DirectoryPage", command.RequestId, true, new
+        {
+            entries,
+            cursor = complete ? null : Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(
+                next.ToString(CultureInfo.InvariantCulture))),
+            isComplete = complete,
+        }, cancellationToken);
+    }
+
+    private static int ParseCursor(JsonElement payload)
+    {
+        if (!payload.TryGetProperty("cursor", out JsonElement cursor) ||
+            cursor.ValueKind is JsonValueKind.Null || string.IsNullOrEmpty(cursor.GetString())) return 0;
+        string text = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(cursor.GetString()!));
+        return int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int offset) && offset >= 0
+            ? offset : throw new InvalidDataException("Cursor invalid.");
     }
 
     private async Task ReadRangeAsync(AdapterControlFrame command, CancellationToken cancellationToken)
