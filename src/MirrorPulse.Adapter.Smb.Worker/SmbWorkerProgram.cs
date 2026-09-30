@@ -266,7 +266,25 @@ internal sealed class SmbTransferProtocol(AdapterControlChannel channel, SmbWork
         bool isDirectory = command.Payload.GetProperty("isDirectory").GetBoolean();
         if (isDirectory)
         {
-            throw new NotSupportedException("The SMB Worker does not delete directories through the mutation protocol.");
+            string resolvedDirectory = paths.ResolveDirectory(path);
+            string? currentDirectory = Directory.Exists(resolvedDirectory)
+                ? DirectoryRevision(resolvedDirectory) : null;
+            if (currentDirectory is null)
+            {
+                await channel.SendAsync("MutationComplete", command.RequestId, true,
+                    new { revision = (string?)null }, cancellationToken);
+                return;
+            }
+
+            if (!string.Equals(currentDirectory, expected, StringComparison.Ordinal))
+            {
+                throw new SmbRevisionConflictException(expected, currentDirectory);
+            }
+
+            Directory.Delete(resolvedDirectory, recursive: true);
+            await channel.SendAsync("MutationComplete", command.RequestId, true,
+                new { revision = (string?)null }, cancellationToken);
+            return;
         }
 
         string resolved = paths.Resolve(path);
@@ -299,7 +317,25 @@ internal sealed class SmbTransferProtocol(AdapterControlChannel channel, SmbWork
         bool isDirectory = command.Payload.GetProperty("isDirectory").GetBoolean();
         if (isDirectory)
         {
-            throw new NotSupportedException("The SMB Worker does not move directories through the mutation protocol.");
+            string sourceDirectory = paths.ResolveDirectory(sourcePath);
+            string destinationDirectory = paths.ResolveDirectory(destinationPath);
+            string? currentDirectory = Directory.Exists(sourceDirectory)
+                ? DirectoryRevision(sourceDirectory) : null;
+            if (!string.Equals(currentDirectory, expected, StringComparison.Ordinal))
+            {
+                throw new SmbRevisionConflictException(expected, currentDirectory);
+            }
+
+            if (Directory.Exists(destinationDirectory) || File.Exists(destinationDirectory))
+            {
+                throw new IOException("The SMB move destination already exists.");
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationDirectory)!);
+            Directory.Move(sourceDirectory, destinationDirectory);
+            await channel.SendAsync("MutationComplete", command.RequestId, true,
+                new { revision = DirectoryRevision(destinationDirectory) }, cancellationToken);
+            return;
         }
 
         string source = paths.Resolve(sourcePath);
@@ -321,6 +357,9 @@ internal sealed class SmbTransferProtocol(AdapterControlChannel channel, SmbWork
         FileInfo file = new(path);
         return $"{file.Length}:{file.LastWriteTimeUtc.Ticks}:{Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))[..8])}";
     }
+
+    private static string DirectoryRevision(string path) =>
+        File.GetLastWriteTimeUtc(path).Ticks.ToString(CultureInfo.InvariantCulture);
 }
 
 internal sealed class SmbRevisionConflictException : IOException
