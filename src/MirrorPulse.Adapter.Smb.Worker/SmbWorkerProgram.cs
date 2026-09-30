@@ -112,6 +112,8 @@ internal sealed class SmbTransferProtocol(AdapterControlChannel channel, SmbWork
                 case "Stat": await StatAsync(command, cancellationToken); break;
                 case "ReadRange": await ReadRangeAsync(command, cancellationToken); break;
                 case "Upload": await UploadAsync(command, cancellationToken); break;
+                case "Delete": await DeleteAsync(command, cancellationToken); break;
+                case "Move": await MoveAsync(command, cancellationToken); break;
                 case "List": await ListAsync(command, cancellationToken); break;
                 default: throw new InvalidDataException("The SMB Worker received an unsupported command.");
             }
@@ -120,8 +122,18 @@ internal sealed class SmbTransferProtocol(AdapterControlChannel channel, SmbWork
         {
             string code = exception is SmbRevisionConflictException ? "RemoteConflict" :
                 exception is InvalidDataException or ArgumentException or JsonException ? "InvalidRequest" :
-                exception is UnauthorizedAccessException ? "AccessDenied" : "RetryableTransferFailure";
-            await channel.SendAsync("OperationError", command.RequestId, true, new { code }, CancellationToken.None);
+                exception is UnauthorizedAccessException ? "AccessDenied" :
+                exception is NotSupportedException ? "CapabilityUnavailable" : "RetryableTransferFailure";
+            if (exception is SmbRevisionConflictException conflict)
+            {
+                await channel.SendAsync("OperationError", command.RequestId, true,
+                    new { code, expectedRevision = conflict.ExpectedRevision, actualRevision = conflict.ActualRevision },
+                    CancellationToken.None);
+            }
+            else
+            {
+                await channel.SendAsync("OperationError", command.RequestId, true, new { code }, CancellationToken.None);
+            }
         }
     }
 
@@ -245,6 +257,65 @@ internal sealed class SmbTransferProtocol(AdapterControlChannel channel, SmbWork
         finally { File.Delete(staged); }
     }
 
+    private async Task DeleteAsync(AdapterControlFrame command, CancellationToken cancellationToken)
+    {
+        string path = command.Payload.GetProperty("path").GetString()
+            ?? throw new InvalidDataException("The SMB delete path is missing.");
+        string? expected = command.Payload.TryGetProperty("expectedRevision", out JsonElement expectedElement) &&
+            expectedElement.ValueKind is not JsonValueKind.Null ? expectedElement.GetString() : null;
+        bool isDirectory = command.Payload.GetProperty("isDirectory").GetBoolean();
+        if (isDirectory)
+        {
+            throw new NotSupportedException("The SMB Worker does not delete directories through the mutation protocol.");
+        }
+
+        string resolved = paths.Resolve(path);
+        string? current = File.Exists(resolved) ? Revision(resolved) : null;
+        if (current is null)
+        {
+            await channel.SendAsync("MutationComplete", command.RequestId, true,
+                new { revision = (string?)null }, cancellationToken);
+            return;
+        }
+
+        if (!string.Equals(current, expected, StringComparison.Ordinal))
+        {
+            throw new SmbRevisionConflictException(expected, current);
+        }
+
+        File.Delete(resolved);
+        await channel.SendAsync("MutationComplete", command.RequestId, true,
+            new { revision = (string?)null }, cancellationToken);
+    }
+
+    private async Task MoveAsync(AdapterControlFrame command, CancellationToken cancellationToken)
+    {
+        string sourcePath = command.Payload.GetProperty("sourcePath").GetString()
+            ?? throw new InvalidDataException("The SMB move source path is missing.");
+        string destinationPath = command.Payload.GetProperty("destinationPath").GetString()
+            ?? throw new InvalidDataException("The SMB move destination path is missing.");
+        string? expected = command.Payload.TryGetProperty("expectedRevision", out JsonElement expectedElement) &&
+            expectedElement.ValueKind is not JsonValueKind.Null ? expectedElement.GetString() : null;
+        bool isDirectory = command.Payload.GetProperty("isDirectory").GetBoolean();
+        if (isDirectory)
+        {
+            throw new NotSupportedException("The SMB Worker does not move directories through the mutation protocol.");
+        }
+
+        string source = paths.Resolve(sourcePath);
+        string destination = paths.Resolve(destinationPath);
+        string? current = File.Exists(source) ? Revision(source) : null;
+        if (!string.Equals(current, expected, StringComparison.Ordinal))
+        {
+            throw new SmbRevisionConflictException(expected, current);
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        File.Move(source, destination, overwrite: true);
+        await channel.SendAsync("MutationComplete", command.RequestId, true,
+            new { revision = Revision(destination) }, cancellationToken);
+    }
+
     private static string Revision(string path)
     {
         FileInfo file = new(path);
@@ -252,4 +323,16 @@ internal sealed class SmbTransferProtocol(AdapterControlChannel channel, SmbWork
     }
 }
 
-internal sealed class SmbRevisionConflictException : IOException;
+internal sealed class SmbRevisionConflictException : IOException
+{
+    public SmbRevisionConflictException(string? expectedRevision = null, string? actualRevision = null)
+        : base("The SMB source changed before a conditional operation could complete.")
+    {
+        ExpectedRevision = expectedRevision;
+        ActualRevision = actualRevision;
+    }
+
+    public string? ExpectedRevision { get; }
+
+    public string? ActualRevision { get; }
+}
