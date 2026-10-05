@@ -45,7 +45,7 @@ public sealed class SmbWorkerProtocolTests
     [TestMethod]
     public async Task TwoAuthorizedSourcesKeepIdenticalPathsAndTransfersIndependent()
     {
-        await using var session = await SmbWorkerSession.StartAsync();
+        await using var session = await SmbWorkerSession.StartAsync(privatePayload: true);
         CollectionAssert.AreEqual(EnabledCredentialRoots, session.CredentialRoots);
         foreach (string root in new[] { "left", "right" })
         {

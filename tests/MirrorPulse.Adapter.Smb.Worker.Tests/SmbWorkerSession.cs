@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO.Pipes;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text.Json;
 using MirrorPulse.Adapter.Sdk;
 
@@ -15,7 +17,7 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
     private readonly CancellationTokenSource _deadline = new(TimeSpan.FromSeconds(30));
     private int _protocol = 1;
 
-    private SmbWorkerSession(string root)
+    private SmbWorkerSession(string root, bool privatePayload)
     {
         Root = root;
         Directory.CreateDirectory(root);
@@ -25,6 +27,21 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
         string? configuredWorker = Environment.GetEnvironmentVariable("MP_SMB_TEST_WORKER_EXE");
         string executable = configuredWorker ?? Path.Combine(FindRepository(), "src", "MirrorPulse.Adapter.Smb.Worker", "bin", "Release",
             "net10.0-windows", "MirrorPulse.Adapter.Smb.Worker.exe");
+        if (privatePayload)
+        {
+            string privateDirectory = Path.Combine(root, "private-worker");
+            var directory = Directory.CreateDirectory(privateDirectory);
+            var acl = new DirectorySecurity();
+            acl.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            foreach (SecurityIdentifier identity in new[] { WindowsIdentity.GetCurrent().User!, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null) })
+                acl.AddAccessRule(new FileSystemAccessRule(identity, FileSystemRights.FullControl,
+                    InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+            directory.SetAccessControl(acl);
+            foreach (string file in Directory.EnumerateFiles(Path.GetDirectoryName(executable)!))
+                File.Copy(file, Path.Combine(privateDirectory, Path.GetFileName(file)));
+            executable = Path.Combine(privateDirectory, Path.GetFileName(executable));
+        }
+        Executable = executable;
         var start = new ProcessStartInfo(executable)
         { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(executable)! };
         start.Environment.Clear();
@@ -52,10 +69,11 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
 
     public string Root { get; }
     public string Cache { get; }
+    public string Executable { get; }
     public List<string> CredentialRoots { get; } = [];
     public AdapterControlFrame? StartupFrame { get; private set; }
 
-    public static async Task<SmbWorkerSession> StartAsync(bool currentIdentity = false, bool wrongShare = false, bool shareRoot = false)
+    public static async Task<SmbWorkerSession> StartAsync(bool currentIdentity = false, bool wrongShare = false, bool shareRoot = false, bool privatePayload = false)
     {
         string backing = FixtureValue("BACKING");
         string directory = "mp-smb-v2-" + Guid.NewGuid().ToString("N");
@@ -66,7 +84,7 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
             await File.WriteAllTextAsync(Path.Combine(root, name, "same.txt"), name);
             await File.WriteAllTextAsync(Path.Combine(root, name, "second.txt"), "second-" + name);
         }
-        var session = new SmbWorkerSession(root);
+        var session = new SmbWorkerSession(root, privatePayload);
         try
         {
             await session._pipe.WaitForConnectionAsync(session._deadline.Token);
@@ -113,9 +131,9 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
             else Assert.AreEqual("Connected", connected.MessageType);
             Assert.AreEqual(2, connected.ProtocolVersion);
             Assert.IsFalse(connected.Payload.TryGetProperty("networkPath", out _));
-            if (Environment.GetEnvironmentVariable("MP_SMB_TEST_WORKER_EXE") is { } executable)
+            if (Environment.GetEnvironmentVariable("MP_SMB_TEST_WORKER_EXE") is not null)
             {
-                string privateRuntime = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(executable)!, "coreclr.dll"));
+                string privateRuntime = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(session.Executable)!, "coreclr.dll"));
                 ProcessModule[] modules = session._process.Modules.Cast<ProcessModule>().ToArray();
                 Assert.AreEqual(privateRuntime, modules.Single(module => module.ModuleName.Equals("coreclr.dll", StringComparison.OrdinalIgnoreCase)).FileName, ignoreCase: true);
             }

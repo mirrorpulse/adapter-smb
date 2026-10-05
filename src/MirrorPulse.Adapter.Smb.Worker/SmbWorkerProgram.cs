@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using MirrorPulse.Adapter.Sdk;
@@ -29,6 +30,9 @@ public static class SmbWorkerProgram
             channel.SelectProtocol(ready.SelectedVersion);
             string cache = Environment.GetEnvironmentVariable("MP_TRANSFER_CACHE_DIR")
                 ?? throw new InvalidDataException("TransferCacheRequired");
+            // Resolve the product-owned cryptography dependency before any source
+            // identity is applied. An SMB identity cannot read the private payload.
+            _ = SHA256.HashData(ReadOnlySpan<byte>.Empty);
             using SmbWorkerRoots roots = await SmbWorkerRoots.CreateAsync(ready, channel, cancellationToken).ConfigureAwait(false);
             await using var protocol = new SmbWorkerProtocol(channel, arguments, roots, cache);
             await channel.SendAsync("Connected", helloId, false, new { }, cancellationToken).ConfigureAwait(false);

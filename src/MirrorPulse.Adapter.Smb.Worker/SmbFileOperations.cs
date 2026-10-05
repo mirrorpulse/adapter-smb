@@ -20,6 +20,8 @@ internal static class SmbFileOperations
             return new(item.IsDirectory, item.IsDirectory ? null : item.Stream!.Length,
                 item.CreationTime, item.LastWriteTime, await item.RevisionAsync(token).ConfigureAwait(false));
         }
+        catch (FileNotFoundException exception) when (exception.FileName?.StartsWith("System.Security.Cryptography,", StringComparison.Ordinal) == true)
+        { throw new SmbItemReadException("CryptographyDependency", exception); }
         catch (IOException exception) { throw new SmbItemReadException("Content", exception); }
     }
 
