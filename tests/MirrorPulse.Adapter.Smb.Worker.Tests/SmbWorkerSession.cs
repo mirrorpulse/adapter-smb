@@ -26,9 +26,15 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
         string executable = configuredWorker ?? Path.Combine(FindRepository(), "src", "MirrorPulse.Adapter.Smb.Worker", "bin", "Release",
             "net10.0-windows", "MirrorPulse.Adapter.Smb.Worker.exe");
         var start = new ProcessStartInfo(executable)
-        { UseShellExecute = false, CreateNoWindow = true };
-        foreach (string name in start.Environment.Keys.Where(name => name.Contains("TOKEN", StringComparison.OrdinalIgnoreCase) ||
-            name.Contains("PASSWORD", StringComparison.OrdinalIgnoreCase)).ToArray()) start.Environment.Remove(name);
+        { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(executable)! };
+        start.Environment.Clear();
+        string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        start.Environment["SystemRoot"] = windows;
+        start.Environment["WINDIR"] = windows;
+        start.Environment["SystemDrive"] = Path.GetPathRoot(windows)!.TrimEnd(Path.DirectorySeparatorChar);
+        start.Environment["PATH"] = Environment.SystemDirectory;
+        start.Environment["TEMP"] = root;
+        start.Environment["TMP"] = root;
         foreach (string argument in new[] { "--instance-id", _instance.ToString("D"), "--worker-session-id", _session.ToString("D"), "--pipe-name", pipeName })
             start.ArgumentList.Add(argument);
         Cache = Path.Combine(root, "transfers");
