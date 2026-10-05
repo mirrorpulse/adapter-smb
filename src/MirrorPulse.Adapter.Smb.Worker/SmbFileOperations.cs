@@ -10,6 +10,15 @@ namespace MirrorPulse.Adapter.Smb.Worker;
 /// <summary>Conditional operations retain ordinary Windows sharing locks through the native mutation.</summary>
 internal static class SmbFileOperations
 {
+    public static async Task<SmbItemDescription> DescribeAsync(SmbWorkerPaths paths, string relative, CancellationToken token)
+    {
+        string path = paths.Resolve(relative);
+        using var parents = new DirectoryLease(Path.GetDirectoryName(path)!);
+        using ProtectedObject item = ProtectedObject.TryOpen(path, mutate: false) ?? throw new FileNotFoundException();
+        return new(item.IsDirectory, item.IsDirectory ? null : item.Stream!.Length,
+            item.CreationTime, item.LastWriteTime, await item.RevisionAsync(token).ConfigureAwait(false));
+    }
+
     public static async Task<string?> RevisionAsync(SmbWorkerPaths paths, string relative, CancellationToken token)
     {
         string path = paths.ResolveDirectory(relative);
@@ -196,6 +205,11 @@ internal static class SmbFileOperations
         public SafeFileHandle Handle => _handle;
         public FileStream? Stream { get; }
         public bool IsDirectory => (_information.Attributes & 0x10) != 0;
+        public DateTimeOffset CreationTime => Time(_information.CreationTime);
+        public DateTimeOffset LastWriteTime => Time(_information.WriteTime);
+
+        private static DateTimeOffset Time(Native.FileTime value) =>
+            new(DateTime.FromFileTimeUtc(checked((long)(((ulong)value.High << 32) | value.Low))));
 
         public static ProtectedObject? TryOpen(string path, bool mutate)
         {
@@ -326,6 +340,9 @@ internal static class SmbFileOperations
     private static SmbRecoveryRequiredException RecoveryRequired(SmbWorkerPaths paths, string recovery) =>
         new(Path.GetRelativePath(paths.Root, recovery).Replace(Path.DirectorySeparatorChar, '/'));
 }
+
+internal sealed record SmbItemDescription(bool IsDirectory, long? Length, DateTimeOffset CreationTime,
+    DateTimeOffset LastWriteTime, string Revision);
 
 internal sealed class NativeFileException(int error) : IOException("SmbNativeFailure")
 {

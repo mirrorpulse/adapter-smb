@@ -98,19 +98,18 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
         foreach (string child in children.Take(size))
         {
             string relative = Path.GetRelativePath(paths.Root, child).Replace(Path.DirectorySeparatorChar, '/');
-            string resolved = paths.Resolve(relative);
-            bool isDirectory = Directory.Exists(resolved);
             try
             {
+                SmbItemDescription item = await SmbFileOperations.DescribeAsync(paths, relative, token).ConfigureAwait(false);
                 entries.Add(new
                 {
                     remoteId = relative,
                     relativePath = relative,
-                    remoteRevision = await SmbFileOperations.RevisionAsync(paths, relative, token).ConfigureAwait(false),
-                    itemKind = isDirectory ? "Directory" : "File",
-                    length = isDirectory ? (long?)null : new FileInfo(resolved).Length,
-                    creationTime = new DateTimeOffset(File.GetCreationTimeUtc(resolved), TimeSpan.Zero),
-                    lastWriteTime = new DateTimeOffset(File.GetLastWriteTimeUtc(resolved), TimeSpan.Zero),
+                    remoteRevision = item.Revision,
+                    itemKind = item.IsDirectory ? "Directory" : "File",
+                    length = item.Length,
+                    creationTime = item.CreationTime,
+                    lastWriteTime = item.LastWriteTime,
                     isDeleted = false
                 });
             }

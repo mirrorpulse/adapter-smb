@@ -52,6 +52,11 @@ public sealed class SmbWorkerProtocolTests
             AdapterControlFrame page = await session.RequestAsync("List", new { rootKey = root, path = "", pageSize = 1 });
             Assert.AreEqual("DirectoryPage", page.MessageType);
             Assert.AreEqual("same.txt", page.Payload.GetProperty("entries")[0].GetProperty("remoteId").GetString());
+            Assert.AreEqual(root.Length, page.Payload.GetProperty("entries")[0].GetProperty("length").GetInt32());
+            AdapterControlFrame stat = await session.RequestAsync("Stat", new { rootKey = root, path = "same.txt" });
+            Assert.AreEqual(stat.Payload.GetProperty("revision").GetString(), page.Payload.GetProperty("entries")[0].GetProperty("remoteRevision").GetString());
+            Assert.AreEqual(File.GetCreationTimeUtc(Path.Combine(session.Root, root, "same.txt")),
+                page.Payload.GetProperty("entries")[0].GetProperty("creationTime").GetDateTimeOffset().UtcDateTime);
             Assert.AreEqual(root, Encoding.UTF8.GetString(await session.ReadRangeAsync(root, "same.txt", root.Length)));
             byte[] bytes = Encoding.UTF8.GetBytes("uploaded-" + root);
             Assert.AreEqual("UploadComplete", (await session.UploadAsync(root, "new.txt", bytes)).MessageType);
