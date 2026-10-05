@@ -38,7 +38,13 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
                     InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
             directory.SetAccessControl(acl);
             foreach (string file in Directory.EnumerateFiles(Path.GetDirectoryName(executable)!))
-                File.Copy(file, Path.Combine(privateDirectory, Path.GetFileName(file)));
+            {
+                string copied = Path.Combine(privateDirectory, Path.GetFileName(file));
+                File.Copy(file, copied);
+                // Generated apphosts can be read-only. The disposable copy must
+                // be removable without changing the protected directory ACL.
+                File.SetAttributes(copied, File.GetAttributes(copied) & ~FileAttributes.ReadOnly);
+            }
             executable = Path.Combine(privateDirectory, Path.GetFileName(executable));
         }
         Executable = executable;
