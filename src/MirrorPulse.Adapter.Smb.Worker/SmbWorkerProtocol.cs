@@ -87,25 +87,34 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
                 throw new InvalidDataException("InvalidCursor");
         }
         string directory = paths.ResolveDirectory(address.Path);
-        string[] children = Directory.EnumerateFileSystemEntries(directory).Where(item => !SmbWorkerPaths.IsTransferName(Path.GetFileName(item))).Order(StringComparer.OrdinalIgnoreCase)
-            .ThenBy(item => item, StringComparer.Ordinal).Skip(offset).Take(size + 1).ToArray();
+        string[] children;
+        try
+        {
+            children = Directory.EnumerateFileSystemEntries(directory).Where(item => !SmbWorkerPaths.IsTransferName(Path.GetFileName(item))).Order(StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item, StringComparer.Ordinal).Skip(offset).Take(size + 1).ToArray();
+        }
+        catch (IOException exception) { throw new SmbSourceReadException("Enumeration", exception); }
         var entries = new List<object>(size);
         foreach (string child in children.Take(size))
         {
             string relative = Path.GetRelativePath(paths.Root, child).Replace(Path.DirectorySeparatorChar, '/');
             string resolved = paths.Resolve(relative);
             bool isDirectory = Directory.Exists(resolved);
-            entries.Add(new
+            try
             {
-                remoteId = relative,
-                relativePath = relative,
-                remoteRevision = await SmbFileOperations.RevisionAsync(paths, relative, token).ConfigureAwait(false),
-                itemKind = isDirectory ? "Directory" : "File",
-                length = isDirectory ? (long?)null : new FileInfo(resolved).Length,
-                creationTime = new DateTimeOffset(File.GetCreationTimeUtc(resolved), TimeSpan.Zero),
-                lastWriteTime = new DateTimeOffset(File.GetLastWriteTimeUtc(resolved), TimeSpan.Zero),
-                isDeleted = false
-            });
+                entries.Add(new
+                {
+                    remoteId = relative,
+                    relativePath = relative,
+                    remoteRevision = await SmbFileOperations.RevisionAsync(paths, relative, token).ConfigureAwait(false),
+                    itemKind = isDirectory ? "Directory" : "File",
+                    length = isDirectory ? (long?)null : new FileInfo(resolved).Length,
+                    creationTime = new DateTimeOffset(File.GetCreationTimeUtc(resolved), TimeSpan.Zero),
+                    lastWriteTime = new DateTimeOffset(File.GetLastWriteTimeUtc(resolved), TimeSpan.Zero),
+                    isDeleted = false
+                });
+            }
+            catch (IOException exception) { throw new SmbSourceReadException("Metadata", exception); }
         }
         bool complete = children.Length <= size;
         await ReplyAsync(command, "DirectoryPage", new
@@ -293,6 +302,7 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
     {
         string code = exception switch
         {
+            SmbSourceReadException source => "SourceUnavailable." + source.Phase + "." + source.NativeError.ToString(CultureInfo.InvariantCulture),
             SmbRecoveryRequiredException => "MutationOutcomeAmbiguous",
             SmbMutationOutcomeAmbiguousException => "MutationOutcomeAmbiguous",
             NativeFileException { NativeError: 32 or 33 } => "RemoteConflict",
@@ -328,4 +338,10 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
     private sealed record AcceptedUpload(string Fingerprint, string? Digest, string? Revision);
     private sealed record PendingUpload(AdapterControlFrame Command, AdapterOperationRequest Operation, SmbWorkerPaths Paths,
         string Fingerprint, bool Replay, AdapterStreamBinding Binding, AdapterTransferLease Lease);
+
+    private sealed class SmbSourceReadException(string phase, IOException cause) : IOException("The SMB directory read failed.")
+    {
+        public string Phase { get; } = phase;
+        public int NativeError { get; } = cause is NativeFileException native ? native.NativeError : cause.HResult & 0xffff;
+    }
 }
