@@ -15,6 +15,7 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
     private readonly Dictionary<Guid, PendingUpload> _uploads = [];
     private readonly Dictionary<Guid, AcceptedUpload> _accepted = [];
     private readonly Queue<Guid> _acceptedOrder = [];
+    private readonly HashSet<Guid> _ambiguous = [];
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -134,6 +135,7 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
     {
         AdapterOperationRequest operation = DecodeOperation(command);
         AdapterProtocolJson.ValidateMutation(operation, requiresDestination: false);
+        RefuseAmbiguousReplay(operation.OperationId);
         long length = command.Payload.GetProperty("length").GetInt64();
         Guid stream = command.Payload.GetProperty("streamId").GetGuid();
         if (length < 0 || stream == Guid.Empty || _uploads.Count >= 4) throw new InvalidDataException("UploadLimit");
@@ -196,6 +198,8 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
         }
         catch (Exception exception) when (IsOperationFailure(exception))
         {
+            if (exception is SmbRecoveryRequiredException or SmbMutationOutcomeAmbiguousException)
+                RecordAmbiguous(upload.Operation.OperationId);
             _uploads.Remove(chunk.RequestId);
             await DisposeLeaseAsync(upload.Lease).ConfigureAwait(false);
             await ErrorAsync(upload.Command, exception, token).ConfigureAwait(false);
@@ -234,10 +238,13 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
         }
         else operation = DecodeOperation(command);
         AdapterProtocolJson.ValidateMutation(operation, requiresDestination: command.MessageType == "Move");
+        RefuseAmbiguousReplay(operation.OperationId);
         if (address.Path.Length == 0 || operation.DestinationPath?.Length == 0) throw new InvalidDataException("RootMutationForbidden");
         // A rename cannot transfer authentication or prove an atomic commit across SMB shares.
         if (command.MessageType == "Move" && operation.DestinationRootKey != operation.RootKey)
             throw new InvalidDataException("CrossRootMoveUnavailable");
+        if (command.MessageType == "Move" && operation.IsDirectory)
+            throw new InvalidDataException("DirectoryMoveUnavailable");
         SmbWorkerPaths? destination = command.MessageType == "Move" ? roots.GetPaths(operation.DestinationRootKey!) : null;
         string fingerprint = Fingerprint(command.MessageType, operation, null);
         string? revision;
@@ -248,7 +255,12 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
         }
         else
         {
-            revision = await SmbFileOperations.MutateAsync(command.MessageType, paths, operation, destination, token).ConfigureAwait(false);
+            try { revision = await SmbFileOperations.MutateAsync(command.MessageType, paths, operation, destination, token).ConfigureAwait(false); }
+            catch (IOException exception) when (exception is SmbRecoveryRequiredException or SmbMutationOutcomeAmbiguousException)
+            {
+                RecordAmbiguous(operation.OperationId);
+                throw;
+            }
             _accepted.Add(operation.OperationId, new(fingerprint, null, revision));
             _acceptedOrder.Enqueue(operation.OperationId);
             if (_acceptedOrder.Count > 256) _accepted.Remove(_acceptedOrder.Dequeue());
@@ -258,6 +270,19 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
 
     private static string Fingerprint(string type, AdapterOperationRequest operation, long? length) =>
         Convert.ToHexString(SHA256.HashData(AdapterProtocolJson.Encode(new { type, operation, length })));
+
+    private void RefuseAmbiguousReplay(Guid operation)
+    {
+        if (_ambiguous.Contains(operation)) throw new SmbMutationOutcomeAmbiguousException();
+        if (_ambiguous.Count >= 256) throw new InvalidDataException("RecoveryLimit");
+    }
+
+    private void RecordAmbiguous(Guid operation)
+    {
+        if (_ambiguous.Count < 256) _ambiguous.Add(operation);
+        // At capacity RefuseAmbiguousReplay fences every further mutation, even
+        // a pending transfer that exhausted the budget while it was committing.
+    }
 
     private ValueTask ReplyAsync(AdapterControlFrame command, string type, object payload, CancellationToken token) =>
         channel.SendAsync(type, command.RequestId, true, payload, token);
@@ -269,6 +294,7 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
         string code = exception switch
         {
             SmbRecoveryRequiredException => "MutationOutcomeAmbiguous",
+            SmbMutationOutcomeAmbiguousException => "MutationOutcomeAmbiguous",
             NativeFileException { NativeError: 32 or 33 } => "RemoteConflict",
             NativeFileException { NativeError: 80 or 183 } => "DestinationExists",
             NativeFileException { NativeError: 145 } => "DirectoryNotEmpty",

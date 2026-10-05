@@ -44,7 +44,8 @@ internal static class SmbFileOperations
         string? actual = existing is null ? null : await existing.RevisionAsync(token).ConfigureAwait(false);
         if (actual != conditions.ExpectedRevision || (conditions.DestinationMustBeAbsent && existing is not null))
             throw new InvalidDataException("RemoteConflict");
-        string staged = Path.Combine(Path.GetDirectoryName(destination)!, ".mp-upload-" + Guid.NewGuid().ToString("N"));
+        string staged = Path.Combine(Path.GetDirectoryName(destination)!, ".mp-upload-" + operation.OperationId.ToString("N") + "-" + Guid.NewGuid().ToString("N"));
+        bool accepted = false;
         try
         {
             await using (var output = new FileStream(staged, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.Asynchronous))
@@ -63,17 +64,19 @@ internal static class SmbFileOperations
                 // Move the exact accepted object, retaining its sharing lock. The
                 // publication below never overwrites a newly created destination.
                 Native.Rename(existing.Handle, recovery);
+                accepted = true;
             }
             try { Native.Rename(candidate.Handle, destination); }
             catch (NativeFileException)
             {
                 if (recovery is not null)
                 {
-                    try { Native.Rename(existing!.Handle, destination); }
+                    try { Native.Rename(existing!.Handle, destination); accepted = false; }
                     catch (NativeFileException) { throw RecoveryRequired(paths, recovery); }
                 }
                 throw;
             }
+            accepted = true;
             string revision = await candidate.RevisionAsync(token).ConfigureAwait(false);
             if (recovery is not null)
             {
@@ -82,7 +85,19 @@ internal static class SmbFileOperations
             }
             return revision;
         }
-        finally { File.Delete(staged); }
+        catch (IOException exception) when (accepted && exception is not SmbRecoveryRequiredException)
+        {
+            throw new SmbMutationOutcomeAmbiguousException();
+        }
+        finally
+        {
+            try { File.Delete(staged); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // A disconnected server can retain this hidden, operation-bound stage.
+                // Cleanup must not mask an acceptance or recovery outcome already known.
+            }
+        }
     }
 
     public static async Task<string?> MutateAsync(string type, SmbWorkerPaths sourcePaths, AdapterOperationRequest operation,
@@ -99,8 +114,12 @@ internal static class SmbFileOperations
                 return await item.RevisionAsync(token).ConfigureAwait(false);
             }
             Native.CreateDirectory(source);
-            using ProtectedObject created = ProtectedObject.TryOpen(source, mutate: false) ?? throw new DirectoryNotFoundException();
-            return await created.RevisionAsync(token).ConfigureAwait(false);
+            try
+            {
+                using ProtectedObject created = ProtectedObject.TryOpen(source, mutate: false) ?? throw new DirectoryNotFoundException();
+                return await created.RevisionAsync(token).ConfigureAwait(false);
+            }
+            catch (IOException) { throw new SmbMutationOutcomeAmbiguousException(); }
         }
         if (item is null) throw new InvalidDataException("RemoteConflict");
         if (item.IsDirectory != operation.IsDirectory) throw new InvalidDataException("ItemKindMismatch");
@@ -118,7 +137,8 @@ internal static class SmbFileOperations
         string destination = destinationPaths.Resolve(operation.DestinationPath!);
         using var destinationParents = new DirectoryLease(Path.GetDirectoryName(destination)!);
         Native.Rename(item.Handle, destination);
-        return await item.RevisionAsync(token).ConfigureAwait(false);
+        try { return await item.RevisionAsync(token).ConfigureAwait(false); }
+        catch (IOException) { throw new SmbMutationOutcomeAmbiguousException(); }
     }
 
     private sealed class DirectoryLease : IDisposable
@@ -232,17 +252,26 @@ internal static class SmbFileOperations
             // FILE_RENAME_INFO_EX layout is shared by x64 and ARM64.
             BitConverter.GetBytes(name.Length).CopyTo(buffer, IntPtr.Size * 2);
             name.CopyTo(buffer, nameOffset);
-            if (!SetFileInformationByHandle(handle, 3, buffer, checked((uint)buffer.Length))) throw new NativeFileException(Marshal.GetLastPInvokeError());
+            if (!SetFileInformationByHandle(handle, 3, buffer, checked((uint)buffer.Length))) throw MutationFailure();
         }
 
         public static void Delete(SafeFileHandle handle)
         {
-            if (!SetFileInformationByHandle(handle, 4, [1], 1)) throw new NativeFileException(Marshal.GetLastPInvokeError());
+            if (!SetFileInformationByHandle(handle, 4, [1], 1)) throw MutationFailure();
         }
 
         public static void CreateDirectory(string path)
         {
-            if (!CreateDirectoryW(path, IntPtr.Zero)) throw new NativeFileException(Marshal.GetLastPInvokeError());
+            if (!CreateDirectoryW(path, IntPtr.Zero)) throw MutationFailure();
+        }
+
+        private static IOException MutationFailure()
+        {
+            int error = Marshal.GetLastPInvokeError();
+            // Known native refusals prove rejection. A transport or unknown error can
+            // arrive after the server committed; never present it as safe to replay.
+            return error is 1 or 2 or 3 or 5 or 17 or 32 or 33 or 50 or 80 or 87 or 145 or 183 or 206
+                ? new NativeFileException(error) : new SmbMutationOutcomeAmbiguousException();
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -305,3 +334,5 @@ internal sealed class SmbRecoveryRequiredException(string path) : IOException("M
 {
     public string RecoveryRelativePath { get; } = path;
 }
+
+internal sealed class SmbMutationOutcomeAmbiguousException() : IOException("MutationOutcomeAmbiguous");

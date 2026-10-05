@@ -29,6 +29,21 @@ instead of claiming an atomic cross-share rename. Pending uploads use the Host
 transfer cache and are cleaned on cancellation or process exit. Session receipts
 are bounded; the Host owns durable recovery.
 
+Conditional replacement holds the accepted object and its ancestor handles,
+stages content under an exclusive name, and publishes without overwriting a
+competing destination. A retained `.mp-recovery-<operationId>` copy is explicit
+recovery evidence. Nonempty directory deletion is refused; it never recursively
+accepts new children. Directory moves are refused with `DirectoryMoveUnavailable`:
+an accepted directory timestamp cannot prove an unchanged child set on an SMB
+server. File moves within one root, directory creation, and empty deletion are
+supported. Transport errors or lost mutation acknowledgments are
+reported as `MutationOutcomeAmbiguous`, and that operation is fenced within the
+session. The Host must reconcile it after restart. The receipt limit also stops
+new mutations when unresolved outcomes exhaust the session budget.
+An unavailable server can retain a hidden `.mp-upload-<operationId>-<random>`
+stage. Cleanup does not mask the original acceptance or recovery result; durable
+reconciliation and later removal belong to the Host.
+
 Run `pwsh ./eng/verify.ps1` for locked restore, Release, formatting, and path
 boundaries. CI additionally uses `-RequireNative` with disposable local accounts
 and actual SMB shares to check reads, uploads, per-root credential isolation,

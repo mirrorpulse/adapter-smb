@@ -17,7 +17,7 @@ $filter = if ($RequireNative) { 'FullyQualifiedName~SmbWorker' } else { 'TestCat
 if ($LASTEXITCODE -ne 0) { throw 'SMB conformance failed.' }
 [xml]$trx = Get-Content -LiteralPath artifacts/test-results/smb-worker.trx -Raw
 $counts = $trx.TestRun.ResultSummary.Counters
-$expected = if ($RequireNative) { 19 } else { 12 }
+$expected = if ($RequireNative) { 27 } else { 12 }
 if ($counts.total -ne $expected -or $counts.executed -ne $expected -or $counts.passed -ne $expected -or $counts.notExecuted -ne 0) {
     throw 'Every selected SMB boundary must execute without skips.'
 }

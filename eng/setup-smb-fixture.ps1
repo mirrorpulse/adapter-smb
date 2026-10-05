@@ -1,8 +1,21 @@
 [CmdletBinding()]
-param([switch]$Cleanup)
+param([switch]$Cleanup, [switch]$DisconnectLeft, [switch]$ReconnectLeft)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -cne 'true' -or -not $env:RUNNER_TEMP) { throw 'The SMB fixture may only run on a disposable GitHub Actions runner.' }
 $runnerRoot = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\') + '\'
+if ($DisconnectLeft -or $ReconnectLeft) {
+    if ($DisconnectLeft -and $ReconnectLeft) { throw 'Choose one fixture transition.' }
+    $user = $env:MP_SMB_FIXTURE_LEFT_USER
+    if ($user -cnotmatch '\AMpSmbL[a-f0-9]{8}\z' -or $env:MP_SMB_FIXTURE_LEFT_SHARE -cne "\\localhost\$user") {
+        throw 'The fixture transition targets an unexpected share.'
+    }
+    $backing = [IO.Path]::GetFullPath($env:MP_SMB_FIXTURE_BACKING)
+    if (-not $backing.StartsWith($runnerRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        [IO.Path]::GetFileName($backing) -cnotmatch '\Amp-smb-[a-f0-9]{32}\z') { throw 'The share backing path escaped the fixture.' }
+    if ($DisconnectLeft) { Remove-SmbShare -Name $user -Force }
+    else { New-SmbShare -Name $user -Path $backing -FullAccess @("$env:COMPUTERNAME\$user", "$env:USERDOMAIN\$env:USERNAME") | Out-Null }
+    return
+}
 if ($Cleanup) {
     foreach ($side in @('LEFT', 'RIGHT')) {
         $user = [Environment]::GetEnvironmentVariable("MP_SMB_FIXTURE_${side}_USER")
