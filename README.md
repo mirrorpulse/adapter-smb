@@ -11,8 +11,12 @@ credentials, or access a share.
 Without a `credentialReference`, a root uses the current Windows identity. With
 one, the Host supplies its password over the pipe; root configuration supplies
 `username` and optional `domain` (omit domain for a UPN). The Worker creates a
-separate `LOGON32_LOGON_NEW_CREDENTIALS` token and applies it across every
-asynchronous source operation. It does not create a mapped drive, change an
+separate `LOGON32_LOGON_NEW_CREDENTIALS` token for remote servers and applies it
+across every asynchronous source operation. Local servers instead use
+`LOGON32_LOGON_NETWORK_CLEARTEXT` so the local authorization SID matches the
+configured account. DNS results mixing local and remote addresses are refused.
+Transfer leases are created and cleaned without impersonation, under the MP user.
+The Worker does not create a mapped drive, change an
 existing network connection, save a password, or write persistent settings.
 Secrets are never included in normal diagnostics. Explicit gMSA authentication
 is unsupported by this Windows logon type.

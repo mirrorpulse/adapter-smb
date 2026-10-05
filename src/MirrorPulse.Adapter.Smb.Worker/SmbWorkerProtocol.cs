@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Win32.SafeHandles;
 using MirrorPulse.Adapter.Sdk;
 
 namespace MirrorPulse.Adapter.Smb.Worker;
@@ -149,13 +151,13 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
                 throw new InvalidDataException("RemoteConflict");
         }
         if (!Directory.Exists(Path.GetDirectoryName(destination))) throw new InvalidDataException("ParentNotFound");
-        var lease = new AdapterTransferLease(cache);
+        var lease = WindowsIdentity.RunImpersonated(SafeAccessTokenHandle.InvalidHandle, () => new AdapterTransferLease(cache));
         try
         {
             _uploads.Add(command.RequestId, new(command, operation, paths, fingerprint, replay,
                 new(command.RequestId, arguments.InstanceId, arguments.WorkerSessionId, stream, address.RootKey, 0, length), lease));
         }
-        catch { await lease.DisposeAsync().ConfigureAwait(false); throw; }
+        catch { await DisposeLeaseAsync(lease).ConfigureAwait(false); throw; }
         await ReplyAsync(command, "UploadReady", new { rootKey = address.RootKey, operationId = operation.OperationId, streamId = stream }, token).ConfigureAwait(false);
     }
 
@@ -183,7 +185,7 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
                 _acceptedOrder.Enqueue(upload.Operation.OperationId);
                 if (_acceptedOrder.Count > 256) _accepted.Remove(_acceptedOrder.Dequeue());
             }
-            await upload.Lease.DisposeAsync().ConfigureAwait(false);
+            await DisposeLeaseAsync(upload.Lease).ConfigureAwait(false);
             await ReplyAsync(upload.Command, "UploadComplete", new
             {
                 rootKey = upload.Operation.RootKey,
@@ -195,7 +197,7 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
         catch (Exception exception) when (IsOperationFailure(exception))
         {
             _uploads.Remove(chunk.RequestId);
-            await upload.Lease.DisposeAsync().ConfigureAwait(false);
+            await DisposeLeaseAsync(upload.Lease).ConfigureAwait(false);
             await ErrorAsync(upload.Command, exception, token).ConfigureAwait(false);
         }
     }
@@ -212,7 +214,7 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
             if (cancel.Payload.TryGetProperty("operationId", out JsonElement operation) && operation.ValueKind != JsonValueKind.Null &&
                 operation.GetGuid() != upload.Operation.OperationId) throw new InvalidDataException("CancelOperationMismatch");
             _uploads.Remove(target);
-            await upload.Lease.CancelAsync().ConfigureAwait(false);
+            await WindowsIdentity.RunImpersonatedAsync(SafeAccessTokenHandle.InvalidHandle, () => upload.Lease.CancelAsync().AsTask()).ConfigureAwait(false);
             await ErrorAsync(upload.Command, new InvalidDataException("Canceled"), token).ConfigureAwait(false);
             status = "canceled";
         }
@@ -290,9 +292,12 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
 
     public async ValueTask DisposeAsync()
     {
-        foreach (PendingUpload upload in _uploads.Values) await upload.Lease.DisposeAsync().ConfigureAwait(false);
+        foreach (PendingUpload upload in _uploads.Values) await DisposeLeaseAsync(upload.Lease).ConfigureAwait(false);
         _uploads.Clear();
     }
+
+    private static Task DisposeLeaseAsync(AdapterTransferLease lease) =>
+        WindowsIdentity.RunImpersonatedAsync(SafeAccessTokenHandle.InvalidHandle, () => lease.DisposeAsync().AsTask());
 
     private sealed record AcceptedUpload(string Fingerprint, string? Digest, string? Revision);
     private sealed record PendingUpload(AdapterControlFrame Command, AdapterOperationRequest Operation, SmbWorkerPaths Paths,

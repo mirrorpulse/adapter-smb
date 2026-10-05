@@ -38,9 +38,10 @@ internal sealed class SmbWorkerRoots : IDisposable
                             throw new InvalidDataException("InvalidCredentialResponse");
                         string password = response.Payload.GetProperty("secret").GetString() ?? throw new InvalidDataException("CredentialRequired");
                         if (password.Length is < 1 or > 4096 || password.Contains('\0')) throw new InvalidDataException("InvalidCredential");
-                        // NEW_CREDENTIALS keeps the current local identity (including cache access),
-                        // but assigns a separate logon session for outbound SMB authentication.
-                        if (!LogonUserW(username, domain, password, 9, 3, out identity))
+                        // Remote servers use an independent outbound logon session. Local SMB
+                        // loopback must also replace the local SID used by Windows authorization.
+                        int logonType = await SmbServerIdentity.IsLocalAsync(path, token).ConfigureAwait(false) ? 8 : 9;
+                        if (!LogonUserW(username, domain, password, logonType, 3, out identity))
                             throw new UnauthorizedAccessException("IdentityUnavailable");
                     }
                     SmbWorkerPaths paths = identity is null ? new(path) :

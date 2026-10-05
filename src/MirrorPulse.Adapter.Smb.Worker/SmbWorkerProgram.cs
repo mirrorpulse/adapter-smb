@@ -36,12 +36,12 @@ public static class SmbWorkerProgram
             return 0;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return 0; }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or ArgumentException or JsonException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or InvalidDataException or ArgumentException or JsonException or UnauthorizedAccessException or System.Net.Sockets.SocketException)
         {
             // Paths and configuration values must not become ordinary diagnostic output.
             string code = exception is UnauthorizedAccessException ? "AccessDenied" :
                 exception is DirectoryNotFoundException or FileNotFoundException ? "SourceUnavailable" :
-                exception is IOException ? "NetworkUnavailable" : "InvalidConfiguration";
+                exception is IOException or System.Net.Sockets.SocketException ? "NetworkUnavailable" : "InvalidConfiguration";
             await channel.SendAsync("Error", helloId, false, new { code }, CancellationToken.None).ConfigureAwait(false);
             return 1;
         }
