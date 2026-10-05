@@ -17,6 +17,6 @@ foreach (Type type in new[] { typeof(SmbWorkerProtocolTests), typeof(SmbWorkerMu
         Console.WriteLine("Passed: " + method.Name);
     }
 }
-if (count != 17) throw new InvalidDataException("The complete SMB conformance profile must execute without skips.");
+if (count != 18) throw new InvalidDataException("The complete SMB conformance profile must execute without skips.");
 Console.WriteLine("SMB conformance passed with the Worker private runtime: " + count);
 return 0;

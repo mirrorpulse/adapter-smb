@@ -8,6 +8,19 @@ namespace MirrorPulse.Adapter.Smb.Worker.Tests;
 public sealed class SmbWorkerProtocolTests
 {
     private static readonly string[] EnabledCredentialRoots = ["left", "right"];
+
+    [TestMethod]
+    public async Task AStaleReadRevisionIsRejectedBeforeAnyContentFrame()
+    {
+        await using var session = await SmbWorkerSession.StartAsync();
+        AdapterControlFrame current = await session.RequestAsync("Stat", new { rootKey = "left", path = "same.txt" });
+        string expectedRevision = current.Payload.GetProperty("revision").GetString()!;
+        await File.WriteAllTextAsync(Path.Combine(session.Root, "left", "same.txt"), "changed");
+        AdapterControlFrame conflict = await session.RequestAsync("ReadRange", new { rootKey = "left", path = "same.txt", offset = 0, length = 4, expectedRevision });
+        Assert.AreEqual("OperationError", conflict.MessageType);
+        Assert.AreEqual("RemoteConflict", conflict.Payload.GetProperty("code").GetString());
+        Assert.AreEqual("right", Encoding.UTF8.GetString(await session.ReadRangeAsync("right", "same.txt", 5)));
+    }
     [TestMethod]
     public async Task SeparateCredentialsCannotEnterTheOtherShare()
     {

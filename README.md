@@ -49,7 +49,12 @@ boundaries. CI additionally uses `-RequireNative` with disposable local accounts
 and actual SMB shares to check reads, uploads, per-root credential isolation,
 offline roots, cancellation, stable replay, and cursor scope. Fixture setup is
 restricted to GitHub Actions runners and always removes its shares and accounts.
-Signed releases are produced by the repository workflow.
+Both x64 and ARM64 CI runners execute the same source and signed private-runtime
+boundaries without skips. These include actual whole-share metadata, long UNC
+paths, revision-pinned read rejection, source writer conflicts, nonempty directory
+refusal, interrupted-replacement recovery, reparse redirection, and a real share
+disconnect/reconnect while another root keeps working. Signed releases are
+produced by the repository workflow.
 
 Licensed under Apache-2.0. See [LICENSE](LICENSE).
 
