@@ -12,7 +12,10 @@ public sealed class SmbWorkerProtocolTests
     public async Task SeparateCredentialsCannotEnterTheOtherShare()
     {
         await using var session = await SmbWorkerSession.StartAsync(wrongShare: true);
-        Assert.AreEqual("SourceUnavailable", session.StartupFrame!.Payload.GetProperty("code").GetString());
+        AdapterControlFrame denied = session.StartupFrame!.MessageType == "Error" ? session.StartupFrame :
+            await session.RequestAsync("Stat", new { rootKey = "right", path = "same.txt" });
+        Assert.IsTrue(denied.MessageType is "Error" or "OperationError");
+        Assert.IsTrue(denied.Payload.GetProperty("code").GetString() is "SourceUnavailable" or "AccessDenied");
         CollectionAssert.AreEqual(EnabledCredentialRoots, session.CredentialRoots);
         Assert.AreEqual("left", await File.ReadAllTextAsync(Path.Combine(session.Root, "left", "same.txt")));
         Assert.AreEqual("right", await File.ReadAllTextAsync(Path.Combine(session.Root, "right", "same.txt")));

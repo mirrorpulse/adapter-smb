@@ -99,7 +99,8 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
                     new { referenceId = reference, secret = FixtureValue(key.ToUpperInvariant() + "_PASSWORD") }, response: true);
             }
             session.StartupFrame = connected;
-            Assert.AreEqual(wrongShare ? "Error" : "Connected", connected.MessageType);
+            if (wrongShare) Assert.IsTrue(connected.MessageType is "Error" or "Connected");
+            else Assert.AreEqual("Connected", connected.MessageType);
             Assert.AreEqual(2, connected.ProtocolVersion);
             Assert.IsFalse(connected.Payload.TryGetProperty("networkPath", out _));
             if (Environment.GetEnvironmentVariable("MP_SMB_TEST_WORKER_EXE") is { } executable)

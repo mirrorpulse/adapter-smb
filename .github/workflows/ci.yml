@@ -25,7 +25,11 @@ jobs:
         run: pwsh -NoProfile -File eng/verify-release.ps1
       - name: Remove disposable SMB fixture
         if: always()
-        run: pwsh ./eng/setup-smb-fixture.ps1 -Cleanup
+        run: |
+          Get-SmbSession | Select-Object ClientUserName, NumOpens
+          Get-SmbShareAccess -Name $env:MP_SMB_FIXTURE_LEFT_USER | Select-Object AccountName, AccessControlType, AccessRight
+          Get-SmbShareAccess -Name $env:MP_SMB_FIXTURE_RIGHT_USER | Select-Object AccountName, AccessControlType, AccessRight
+          pwsh ./eng/setup-smb-fixture.ps1 -Cleanup
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
