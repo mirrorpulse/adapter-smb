@@ -13,7 +13,7 @@ internal static class SmbFileOperations
     public static async Task<string?> RevisionAsync(SmbWorkerPaths paths, string relative, CancellationToken token)
     {
         string path = paths.ResolveDirectory(relative);
-        using var parents = new DirectoryLease(Path.GetDirectoryName(path)!);
+        using var parents = new DirectoryLease(Path.GetDirectoryName(path) ?? paths.Root);
         using ProtectedObject? item = ProtectedObject.TryOpen(path, mutate: false);
         return item is null ? null : await item.RevisionAsync(token).ConfigureAwait(false);
     }
@@ -231,7 +231,7 @@ internal static class SmbFileOperations
     {
         public static SafeFileHandle Open(string path, uint access, FileShare share)
         {
-            SafeFileHandle handle = CreateFileW(path, access, (uint)share, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+            SafeFileHandle handle = CreateFileW(ExtendedPath(path), access, (uint)share, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
             if (!handle.IsInvalid) return handle;
             int error = Marshal.GetLastPInvokeError();
             handle.Dispose();
@@ -246,7 +246,7 @@ internal static class SmbFileOperations
 
         public static void Rename(SafeFileHandle handle, string destination)
         {
-            byte[] name = Encoding.Unicode.GetBytes(Path.GetFullPath(destination));
+            byte[] name = Encoding.Unicode.GetBytes(ExtendedPath(destination));
             int nameOffset = IntPtr.Size * 2 + 4;
             byte[] buffer = new byte[checked(nameOffset + name.Length)];
             // FILE_RENAME_INFO_EX layout is shared by x64 and ARM64.
@@ -262,8 +262,10 @@ internal static class SmbFileOperations
 
         public static void CreateDirectory(string path)
         {
-            if (!CreateDirectoryW(path, IntPtr.Zero)) throw MutationFailure();
+            if (!CreateDirectoryW(ExtendedPath(path), IntPtr.Zero)) throw MutationFailure();
         }
+
+        private static string ExtendedPath(string path) => "\\\\?\\UNC\\" + Path.GetFullPath(path)[2..];
 
         private static IOException MutationFailure()
         {

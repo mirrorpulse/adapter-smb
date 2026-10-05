@@ -49,7 +49,7 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
     public List<string> CredentialRoots { get; } = [];
     public AdapterControlFrame? StartupFrame { get; private set; }
 
-    public static async Task<SmbWorkerSession> StartAsync(bool currentIdentity = false, bool wrongShare = false)
+    public static async Task<SmbWorkerSession> StartAsync(bool currentIdentity = false, bool wrongShare = false, bool shareRoot = false)
     {
         string backing = FixtureValue("BACKING");
         string directory = "mp-smb-v2-" + Guid.NewGuid().ToString("N");
@@ -71,7 +71,11 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
             Dictionary<string, string> RootConfiguration(string key)
             {
                 string share = wrongShare && key == "right" ? "LEFT" : key.ToUpperInvariant();
-                var values = new Dictionary<string, string> { ["networkPath"] = Path.Combine(FixtureValue(share + "_SHARE"), directory, key) };
+                var values = new Dictionary<string, string>
+                {
+                    ["networkPath"] = shareRoot ? FixtureValue(share + "_SHARE") :
+                    Path.Combine(FixtureValue(share + "_SHARE"), directory, key)
+                };
                 if (!currentIdentity)
                 {
                     values["username"] = FixtureValue(key.ToUpperInvariant() + "_USER");
