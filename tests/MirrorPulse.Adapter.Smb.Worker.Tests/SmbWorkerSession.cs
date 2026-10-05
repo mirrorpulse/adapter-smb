@@ -247,10 +247,19 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (!_process.HasExited) { _process.Kill(entireProcessTree: true); await _process.WaitForExitAsync(); }
+        if (!_process.HasExited) _process.Kill(entireProcessTree: true);
+        await _process.WaitForExitAsync();
         _process.Dispose();
         await _pipe.DisposeAsync();
         _deadline.Dispose();
-        Directory.Delete(Root, recursive: true);
+        // Windows can retain an executable image briefly after process exit.
+        // Retry only disposal of this fixture; a persistent ACL failure still fails.
+        for (int attempt = 0; ; attempt++)
+        {
+            try { Directory.Delete(Root, recursive: true); break; }
+            catch (UnauthorizedAccessException) when (attempt < 40) { await Task.Delay(50); }
+            catch (IOException error) when (attempt < 40 && (error.HResult & 0xffff) is 5 or 32)
+            { await Task.Delay(50); }
+        }
     }
 }
