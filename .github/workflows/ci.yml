@@ -18,6 +18,17 @@ jobs:
         with:
           global-json-file: global.json
       - name: Verify Adapter build
-        run: pwsh ./eng/verify.ps1
+        run: pwsh ./eng/setup-smb-fixture.ps1
+      - name: Verify actual SMB roots and isolated Windows identities
+        run: pwsh ./eng/verify.ps1 -RequireNative
       - name: Verify release input and dual-RID packaging without production keys
         run: pwsh -NoProfile -File eng/verify-release.ps1
+      - name: Remove disposable SMB fixture
+        if: always()
+        run: pwsh ./eng/setup-smb-fixture.ps1 -Cleanup
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: smb-test-results
+          path: artifacts/test-results
+          if-no-files-found: error

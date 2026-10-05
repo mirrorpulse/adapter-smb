@@ -2,9 +2,35 @@
 
 This is the official repository for the MirrorPulse SMB Adapter.
 
-The repository contains the independently buildable Adapter SDK and an SMB protocol Worker. The Worker runs in its own process over the current-user Named Pipe protocol, confines paths to the configured UNC share, supports bounded range reads, conditional staged uploads, and transfer-cache cleanup for x64 and ARM64 packages.
+The Worker consumes the fixed published SDK 0.2.1 and negotiates protocol v2 over
+the current-user Named Pipe. Each enabled root has its own authorized UNC
+`networkPath`. Identical file names, cursors, streams, and stable operation IDs
+remain bound to their root. Disabled roots do not resolve paths, request
+credentials, or access a share.
 
-Run `pwsh ./eng/verify.ps1` to validate the SDK and Worker. Signed releases are produced by the repository workflow.
+Without a `credentialReference`, a root uses the current Windows identity. With
+one, the Host supplies its password over the pipe; root configuration supplies
+`username` and optional `domain` (omit domain for a UPN). The Worker creates a
+separate `LOGON32_LOGON_NEW_CREDENTIALS` token and applies it across every
+asynchronous source operation. It does not create a mapped drive, change an
+existing network connection, save a password, or write persistent settings.
+Secrets are never included in normal diagnostics. Explicit gMSA authentication
+is unsupported by this Windows logon type.
+
+UNC device paths, traversal, Windows aliases, alternate streams and reparse
+points are refused. File operations reuse the reviewed Windows handle and
+sharing policy from the official Local Adapter. Cross-root moves are explicitly
+unavailable: the Host must orchestrate separately accepted copy and delete steps
+instead of claiming an atomic cross-share rename. Pending uploads use the Host
+transfer cache and are cleaned on cancellation or process exit. Session receipts
+are bounded; the Host owns durable recovery.
+
+Run `pwsh ./eng/verify.ps1` for locked restore, Release, formatting, and path
+boundaries. CI additionally uses `-RequireNative` with disposable local accounts
+and actual SMB shares to check reads, uploads, per-root credential isolation,
+offline roots, cancellation, stable replay, and cursor scope. Fixture setup is
+restricted to GitHub Actions runners and always removes its shares and accounts.
+Signed releases are produced by the repository workflow.
 
 Licensed under Apache-2.0. See [LICENSE](LICENSE).
 
@@ -26,7 +52,10 @@ verifies publisher trust at installation.
 The repository owner must configure environment reviewers, trusted branch/tag
 rules and signing-secret scope. YAML environment names alone do not enforce those
 protections. Existing organization secrets remain compatible until that migration.
-The current framework-dependent v1 runtime is retained by this release change.
+Historical v1 releases remain immutable. The developing v2 Worker still uses a
+framework-dependent payload until its private runtime packaging gate is complete.
+The existing release controller deliberately retains its earlier product gate;
+v2 publication requires the new native controller before any formal release.
 
 The release workflow also verifies the newly signed candidate using MirrorPulse
 16c6742 and real Local/WebDAV/SMB/FTP/SFTP Host/Worker fixtures on a disposable
