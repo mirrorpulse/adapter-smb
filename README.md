@@ -71,8 +71,11 @@ verifies publisher trust at installation.
 The repository owner must configure environment reviewers, trusted branch/tag
 rules and signing-secret scope. YAML environment names alone do not enforce those
 protections. Existing organization secrets remain compatible until that migration.
-Historical v1 releases remain immutable. The developing v2 Worker still uses a
-framework-dependent payload until its private runtime packaging gate is complete.
+Historical v1 releases remain immutable. V2 packages contain private runtimes for
+x64 and ARM64, including the exact restored .NET runtime license and third-party
+notices. Native conformance disables normal runtime lookup and verifies that the
+actual Worker loads `coreclr.dll` from its own signed payload. No global .NET
+installation is required by the Worker.
 The existing release controller deliberately retains its earlier product gate;
 v2 publication requires the new native controller before any formal release.
 

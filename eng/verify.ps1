@@ -3,7 +3,7 @@ param([switch]$RequireNative)
 $ErrorActionPreference = "Stop"
 & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'restore-adapter-sdk.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'Fixed SDK verification failed.' }
-$projects = @("src/MirrorPulse.Adapter.Smb.Worker/MirrorPulse.Adapter.Smb.Worker.csproj", "tests/MirrorPulse.Adapter.Smb.Worker.Tests/MirrorPulse.Adapter.Smb.Worker.Tests.csproj")
+$projects = @("src/MirrorPulse.Adapter.Smb.Worker/MirrorPulse.Adapter.Smb.Worker.csproj", "tests/MirrorPulse.Adapter.Smb.Worker.Tests/MirrorPulse.Adapter.Smb.Worker.Tests.csproj", "tools/MirrorPulse.Adapter.Smb.Conformance/MirrorPulse.Adapter.Smb.Conformance.csproj")
 foreach ($project in $projects) {
     & dotnet restore $project --locked-mode
     if ($LASTEXITCODE -ne 0) { throw "Restore failed for $project." }
