@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param([switch]$RequireNative)
 $ErrorActionPreference = "Stop"
+& (Join-Path $PSScriptRoot 'verify-adapter-version.ps1')
+& (Join-Path $PSScriptRoot 'verify-adapter-publishing.ps1')
 & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'restore-adapter-sdk.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'Fixed SDK verification failed.' }
 $projects = @("src/MirrorPulse.Adapter.Smb.Worker/MirrorPulse.Adapter.Smb.Worker.csproj", "tests/MirrorPulse.Adapter.Smb.Worker.Tests/MirrorPulse.Adapter.Smb.Worker.Tests.csproj", "tools/MirrorPulse.Adapter.Smb.Conformance/MirrorPulse.Adapter.Smb.Conformance.csproj")

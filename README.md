@@ -60,12 +60,14 @@ Licensed under Apache-2.0. See [LICENSE](LICENSE).
 
 ## Release governance
 
-The release scripts and pinned staged workflow follow the template at commit
-544c594. Version/tag inputs enter scripts through environment data and are
-validated before paths or builds are created. Build has no signing secrets;
-signing uses the `adapter-signing` environment; publishing alone has write
-permission and uses `adapter-release`. Manual dispatch defaults to a verified
-signed artifact without publishing a tag or Release.
+Provider publication follows the shared template controller. A reviewed,
+classified `develop` to `main` merge creates a stable version; explicit Preview
+dispatches on `develop` create `X.Y.Z-preview.N` versions without taking stable
+`latest`. Manual dispatch defaults to a verified candidate without publication.
+Version, event, branch, source SHA and confirmation inputs are validated before
+paths or builds are created. Build has no signing secrets; signing uses the
+branch-restricted `adapter-signing` environment. Stable publication uses the
+protected `stable` environment and its human approval rule.
 
 Run `pwsh ./eng/verify-release.ps1` for hostile input rejection and a dual-RID
 package signed with a disposable in-memory key. Production keys are read only
@@ -73,18 +75,19 @@ from signing-step environment variables. No private key file is read or exported
 The embedded inventory is verified before upload; MirrorPulse independently
 verifies publisher trust at installation.
 
-The repository owner must configure environment reviewers, trusted branch/tag
-rules and signing-secret scope. YAML environment names alone do not enforce those
-protections. Existing organization secrets remain compatible until that migration.
-Historical v1 releases remain immutable. V2 packages contain private runtimes for
-x64 and ARM64, including the exact restored .NET runtime license and third-party
-notices. Native conformance disables normal runtime lookup and verifies that the
-actual Worker loads `coreclr.dll` from its own signed payload. No global .NET
-installation is required by the Worker.
-The existing release controller deliberately retains its earlier product gate;
-v2 publication requires the new native controller before any formal release.
+Publication freezes one package, detached signature and public verification key
+with source, version, length and SHA256 metadata. Both native jobs verify these
+same assets before the publication job; approval never rebuilds or replaces them.
+Existing releases and tags are immutable. Actual repository and environment
+protection must be verified separately from YAML names.
+Source packages now require protocol v2 and include private runtimes for both RIDs.
+Previously released v1 packages retain their original identities and payloads.
 
-The release workflow also verifies the newly signed candidate using MirrorPulse
-16c6742 and real Local/WebDAV/SMB/FTP/SFTP Host/Worker fixtures on a disposable
-runner. It records both source commits and the candidate package hash. Publishing
-requires that protocol gate; signed dry-run assets remain unpublished.
+The release workflow runs eighteen actual SMB share/Worker cases on both native
+architectures and verifies production installation, Host-owned credentials,
+Named Pipe routing, CfSharp demand reads and conditional mutations using fixed
+MirrorPulse source `879c9ab1283de75d23e972a335734ea15b2fa291`. It records both source
+commits, the exact published SDK 0.2.1 source and the candidate package hash.
+Official candidates must pass the product's fixed publisher trust; exported public
+keys authorize only disposable dry-run verification. Previously published v1
+assets remain available until a reviewed stable v2 release supersedes `latest`.
