@@ -113,6 +113,7 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
                     isDeleted = false
                 });
             }
+            catch (SmbItemReadException exception) { throw new SmbSourceReadException("Metadata" + exception.Phase, exception); }
             catch (IOException exception) { throw new SmbSourceReadException("Metadata", exception); }
         }
         bool complete = children.Length <= size;
@@ -341,6 +342,7 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
     private sealed class SmbSourceReadException(string phase, IOException cause) : IOException("The SMB directory read failed.")
     {
         public string Phase { get; } = phase;
-        public int NativeError { get; } = cause is NativeFileException native ? native.NativeError : cause.HResult & 0xffff;
+        public int NativeError { get; } = cause is NativeFileException native ? native.NativeError :
+            cause is SmbItemReadException item ? item.NativeError : cause.HResult & 0xffff;
     }
 }

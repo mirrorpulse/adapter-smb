@@ -13,10 +13,26 @@ internal static class SmbFileOperations
     public static async Task<SmbItemDescription> DescribeAsync(SmbWorkerPaths paths, string relative, CancellationToken token)
     {
         string path = paths.Resolve(relative);
-        using var parents = new DirectoryLease(Path.GetDirectoryName(path)!);
-        using ProtectedObject item = ProtectedObject.TryOpen(path, mutate: false) ?? throw new FileNotFoundException();
-        return new(item.IsDirectory, item.IsDirectory ? null : item.Stream!.Length,
-            item.CreationTime, item.LastWriteTime, await item.RevisionAsync(token).ConfigureAwait(false));
+        using DirectoryLease parents = DescribeParents(path);
+        using ProtectedObject item = DescribeObject(path);
+        try
+        {
+            return new(item.IsDirectory, item.IsDirectory ? null : item.Stream!.Length,
+                item.CreationTime, item.LastWriteTime, await item.RevisionAsync(token).ConfigureAwait(false));
+        }
+        catch (IOException exception) { throw new SmbItemReadException("Content", exception); }
+    }
+
+    private static DirectoryLease DescribeParents(string path)
+    {
+        try { return new DirectoryLease(Path.GetDirectoryName(path)!); }
+        catch (IOException exception) { throw new SmbItemReadException("Ancestor", exception); }
+    }
+
+    private static ProtectedObject DescribeObject(string path)
+    {
+        try { return ProtectedObject.TryOpen(path, mutate: false) ?? throw new FileNotFoundException(); }
+        catch (IOException exception) { throw new SmbItemReadException("Object", exception); }
     }
 
     public static async Task<string?> RevisionAsync(SmbWorkerPaths paths, string relative, CancellationToken token)
@@ -355,3 +371,9 @@ internal sealed class SmbRecoveryRequiredException(string path) : IOException("M
 }
 
 internal sealed class SmbMutationOutcomeAmbiguousException() : IOException("MutationOutcomeAmbiguous");
+
+internal sealed class SmbItemReadException(string phase, IOException cause) : IOException("The SMB item read failed.")
+{
+    public string Phase { get; } = phase;
+    public int NativeError { get; } = cause is NativeFileException native ? native.NativeError : cause.HResult & 0xffff;
+}
