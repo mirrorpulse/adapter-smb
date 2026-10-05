@@ -1,0 +1,4 @@
+{
+  "workerProject": "src/MirrorPulse.Adapter.Smb.Worker/MirrorPulse.Adapter.Smb.Worker.csproj",
+  "label": "SMB"
+}
