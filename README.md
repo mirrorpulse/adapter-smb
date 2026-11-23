@@ -1,5 +1,7 @@
 # MirrorPulse SMB Adapter
 
+Each deployment syncs one folder on an SMB share. Enter its UNC path in the MirrorPulse setup form. Use the current Windows account or supply a separate username and password.
+
 This is the official repository for the MirrorPulse SMB Adapter.
 
 The Worker consumes the fixed published SDK 1.0.0-preview.5 and negotiates protocol v2 over
@@ -86,7 +88,7 @@ Previously released v1 packages retain their original identities and payloads.
 The release workflow runs eighteen actual SMB share/Worker cases on both native
 architectures and verifies production installation, Host-owned credentials,
 Named Pipe routing, CfSharp demand reads and conditional mutations using fixed
-MirrorPulse source `879c9ab1283de75d23e972a335734ea15b2fa291`. It records both source
+MirrorPulse source `447e4b1cc981066f3c878287585cc3a38cac69cd`. It records both source
 commits, the exact published SDK 1.0.0-preview.5 source and the candidate package hash.
 Official candidates must pass the product's fixed publisher trust; exported public
 keys authorize only disposable dry-run verification. Previously published v1
