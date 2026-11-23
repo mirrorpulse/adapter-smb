@@ -72,10 +72,11 @@ internal static class SmbFileOperations
         if (actual != conditions.ExpectedRevision || (conditions.DestinationMustBeAbsent && existing is not null))
             throw new InvalidDataException("RemoteConflict");
         string staged = Path.Combine(Path.GetDirectoryName(destination)!, ".mp-upload-" + operation.OperationId.ToString("N") + "-" + Guid.NewGuid().ToString("N"));
+        string stagingPath = Native.ExtendedPath(staged);
         bool accepted = false;
         try
         {
-            await using (var output = new FileStream(staged, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.Asynchronous))
+            await using (var output = new FileStream(stagingPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.Asynchronous))
             {
                 content.Position = 0;
                 await content.CopyToAsync(output, token).ConfigureAwait(false);
@@ -118,7 +119,7 @@ internal static class SmbFileOperations
         }
         finally
         {
-            try { File.Delete(staged); }
+            try { File.Delete(stagingPath); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 // A disconnected server can retain this hidden, operation-bound stage.
@@ -297,7 +298,7 @@ internal static class SmbFileOperations
             if (!CreateDirectoryW(ExtendedPath(path), IntPtr.Zero)) throw MutationFailure();
         }
 
-        private static string ExtendedPath(string path) => "\\\\?\\UNC\\" + Path.GetFullPath(path)[2..];
+        internal static string ExtendedPath(string path) => "\\\\?\\UNC\\" + Path.GetFullPath(path)[2..];
 
         private static IOException MutationFailure()
         {

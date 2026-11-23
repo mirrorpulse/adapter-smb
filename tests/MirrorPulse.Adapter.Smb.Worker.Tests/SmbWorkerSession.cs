@@ -203,7 +203,7 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
     }
 
     public async Task<AdapterControlFrame> UploadAsync(string root, string path, byte[] content, Guid? operation = null,
-        AdapterMutationPreconditions? preconditions = null)
+        AdapterMutationPreconditions? preconditions = null, bool requireAdmission = false)
     {
         Guid request = Guid.NewGuid();
         Guid stream = Guid.NewGuid();
@@ -217,6 +217,8 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
             preconditions = preconditions ?? new AdapterMutationPreconditions()
         });
         AdapterControlFrame ready = await ReadAsync();
+        if (requireAdmission && ready.MessageType == "OperationError")
+            Assert.Fail($"Upload admission failed: {ready.Payload.GetProperty("code").GetString()}");
         if (ready.MessageType == "OperationError") return ready;
         Assert.AreEqual("UploadReady", ready.MessageType);
         int offset = 0;

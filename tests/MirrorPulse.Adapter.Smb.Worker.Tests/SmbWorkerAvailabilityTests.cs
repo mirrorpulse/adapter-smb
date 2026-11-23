@@ -29,8 +29,11 @@ public sealed class SmbWorkerAvailabilityTests
         AdapterControlFrame parent = await session.RequestAsync("Stat", new { rootKey = "left", path = relative });
         Assert.AreEqual("StatResult", parent.MessageType, GetOperationFailureCode(parent));
         StringAssert.StartsWith(parent.Payload.GetProperty("revision").GetString(), "directory:");
-        AdapterControlFrame upload = await session.UploadAsync("left", file, "long-path-content"u8.ToArray());
-        Assert.AreEqual("UploadComplete", upload.MessageType, GetOperationFailureCode(upload));
+        AdapterControlFrame absent = await session.RequestAsync("Stat", new { rootKey = "left", path = file });
+        Assert.AreEqual("StatResult", absent.MessageType, GetOperationFailureCode(absent));
+        Assert.IsNull(absent.Payload.GetProperty("revision").GetString());
+        AdapterControlFrame upload = await session.UploadAsync("left", file, "long-path-content"u8.ToArray(), requireAdmission: true);
+        Assert.AreEqual("UploadComplete", upload.MessageType, $"Upload completion failed: {GetOperationFailureCode(upload)}");
         Assert.AreEqual("long-path-content", System.Text.Encoding.UTF8.GetString(await session.ReadRangeAsync("left", file, 17)));
         AdapterControlFrame current = await session.RequestAsync("Stat", new { rootKey = "left", path = file });
         var move = new AdapterOperationRequest(Guid.NewGuid(), "left", file, "left", relative + "/moved.txt",
