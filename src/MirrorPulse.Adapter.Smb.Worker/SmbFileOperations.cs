@@ -95,16 +95,16 @@ internal static class SmbFileOperations
                 // Move the exact accepted object, retaining its sharing lock. The
                 // publication below never overwrites a newly created destination.
                 phase = "preserve-original";
-                Native.Rename(existing.Handle, recovery, parents);
+                Native.Rename(existing.Handle, destination, recovery);
                 accepted = true;
             }
             phase = "publish-stage";
-            try { Native.Rename(candidate.Handle, destination, parents); }
+            try { Native.Rename(candidate.Handle, staged, destination); }
             catch (NativeFileException)
             {
                 if (recovery is not null)
                 {
-                    try { Native.Rename(existing!.Handle, destination, parents); accepted = false; }
+                    try { Native.Rename(existing!.Handle, recovery, destination); accepted = false; }
                     catch (NativeFileException) { throw RecoveryRequired(paths, recovery); }
                 }
                 throw;
@@ -173,7 +173,7 @@ internal static class SmbFileOperations
         if (type != "Move" || destinationPaths is null) throw new InvalidDataException("CapabilityUnavailable");
         string destination = destinationPaths.Resolve(operation.DestinationPath!);
         using var destinationParents = new DirectoryLease(Path.GetDirectoryName(destination)!);
-        Native.Rename(item.Handle, destination, destinationParents);
+        Native.Rename(item.Handle, source, destination);
         try { return await item.RevisionAsync(token).ConfigureAwait(false); }
         catch (IOException) { throw new SmbMutationOutcomeAmbiguousException(); }
     }
@@ -181,8 +181,6 @@ internal static class SmbFileOperations
     private sealed class DirectoryLease : IDisposable
     {
         private readonly List<SafeFileHandle> _handles = [];
-
-        public SafeFileHandle DirectoryHandle => _handles[^1];
 
         public DirectoryLease(string path)
         {
@@ -288,25 +286,27 @@ internal static class SmbFileOperations
             return information;
         }
 
-        public static void Rename(SafeFileHandle handle, string destination, DirectoryLease destinationParents)
+        public static void Rename(SafeFileHandle handle, string source, string destination)
         {
-            // The Windows SMB redirector can reject a long absolute rename target.
-            // Resolve the leaf relative to the same protected destination directory.
+            // An SMB rename in place can use a leaf name through the source handle.
+            // This keeps the full UNC path out of the request and RootDirectory null.
             const int legacyPathLimit = 260;
-            SafeFileHandle? root = destination.Length >= legacyPathLimit ? destinationParents.DirectoryHandle : null;
-            byte[] name = Encoding.Unicode.GetBytes(root is null ? ExtendedPath(destination) : Path.GetFileName(destination));
+            bool renameInPlace = destination.Length >= legacyPathLimit &&
+                string.Equals(Path.GetDirectoryName(source), Path.GetDirectoryName(destination), StringComparison.OrdinalIgnoreCase);
+            byte[] name = Encoding.Unicode.GetBytes(renameInPlace ? Path.GetFileName(destination) : ExtendedPath(destination));
             int nameOffset = IntPtr.Size * 2 + 4;
-            byte[] buffer = new byte[checked(nameOffset + name.Length + sizeof(char))];
+            byte[] buffer = new byte[checked(nameOffset + name.Length + IntPtr.Size)];
             // FILE_RENAME_INFO requires a UTF-16 terminator outside FileNameLength.
-            if (root is not null)
-            {
-                IntPtr directoryHandle = root.DangerousGetHandle();
-                MemoryMarshal.Write(buffer.AsSpan(IntPtr.Size), in directoryHandle);
-            }
             BitConverter.GetBytes(name.Length).CopyTo(buffer, IntPtr.Size * 2);
             name.CopyTo(buffer, nameOffset);
+            if (renameInPlace)
+            {
+                const int fileRenameInformation = 10;
+                int status = NtSetInformationFile(handle, out _, buffer, checked((uint)buffer.Length), fileRenameInformation);
+                if (status != 0) throw MutationFailure(unchecked((int)RtlNtStatusToDosError(status)));
+                return;
+            }
             if (!SetFileInformationByHandle(handle, 3, buffer, checked((uint)buffer.Length))) throw MutationFailure();
-            GC.KeepAlive(root);
         }
 
         public static void Delete(SafeFileHandle handle)
@@ -321,9 +321,10 @@ internal static class SmbFileOperations
 
         internal static string ExtendedPath(string path) => "\\\\?\\UNC\\" + Path.GetFullPath(path)[2..];
 
-        private static IOException MutationFailure()
+        private static IOException MutationFailure() => MutationFailure(Marshal.GetLastPInvokeError());
+
+        private static IOException MutationFailure(int error)
         {
-            int error = Marshal.GetLastPInvokeError();
             // Known native refusals prove rejection. A transport or unknown error can
             // arrive after the server committed; never present it as safe to replay.
             return error is 1 or 2 or 3 or 5 or 17 or 32 or 33 or 50 or 80 or 87 or 145 or 183 or 206
@@ -332,6 +333,9 @@ internal static class SmbFileOperations
 
         [StructLayout(LayoutKind.Sequential)]
         internal struct FileTime { public uint Low; public uint High; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IoStatusBlock { public IntPtr Status; public UIntPtr Information; }
 
         [StructLayout(LayoutKind.Sequential)]
         internal struct FileInformation
@@ -361,6 +365,14 @@ internal static class SmbFileOperations
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int informationClass, byte[] information, uint length);
+
+        [DllImport("ntdll.dll", ExactSpelling = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        private static extern int NtSetInformationFile(SafeFileHandle handle, out IoStatusBlock statusBlock, byte[] information, uint length, int informationClass);
+
+        [DllImport("ntdll.dll", ExactSpelling = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        private static extern uint RtlNtStatusToDosError(int status);
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
