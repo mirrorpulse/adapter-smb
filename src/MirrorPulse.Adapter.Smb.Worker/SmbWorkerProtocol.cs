@@ -320,6 +320,7 @@ internal sealed class SmbWorkerProtocol(AdapterControlChannel channel, AdapterWo
         return ReplyAsync(command, "OperationError", new
         {
             code,
+            uploadPhase = (exception as SmbUploadAccessDeniedException)?.Phase,
             recoveryRelativePath = (exception as SmbRecoveryRequiredException)?.RecoveryRelativePath,
             rootKey = payload.TryGetProperty("rootKey", out JsonElement root) && root.ValueKind == JsonValueKind.String ? root.GetString() : null,
             operationId = payload.TryGetProperty("operationId", out JsonElement operation) && operation.ValueKind == JsonValueKind.String && operation.TryGetGuid(out Guid id) ? (Guid?)id : null

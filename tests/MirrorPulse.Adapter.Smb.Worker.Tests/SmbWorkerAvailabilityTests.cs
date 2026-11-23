@@ -60,8 +60,13 @@ public sealed class SmbWorkerAvailabilityTests
         Assert.AreEqual("StatResult", (await session.RequestAsync("Stat", new { rootKey = "left", path = "same.txt" })).MessageType);
     }
 
-    private static string? GetOperationFailureCode(AdapterControlFrame response) =>
-        response.MessageType == "OperationError" ? response.Payload.GetProperty("code").GetString() : null;
+    private static string? GetOperationFailureCode(AdapterControlFrame response)
+    {
+        if (response.MessageType != "OperationError") return null;
+        string? code = response.Payload.GetProperty("code").GetString();
+        return response.Payload.TryGetProperty("uploadPhase", out var phase) && phase.GetString() is { } value
+            ? $"{code} ({value})" : code;
+    }
 
     private static async Task TransitionAsync(string transition)
     {

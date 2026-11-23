@@ -73,17 +73,20 @@ internal static class SmbFileOperations
             throw new InvalidDataException("RemoteConflict");
         string staged = Path.Combine(Path.GetDirectoryName(destination)!, ".mp-upload-" + operation.OperationId.ToString("N") + "-" + Guid.NewGuid().ToString("N"));
         string stagingPath = Native.ExtendedPath(staged);
+        string phase = "create-stage";
         bool accepted = false;
         try
         {
             await using (var output = new FileStream(stagingPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.Asynchronous))
             {
+                phase = "write-stage";
                 content.Position = 0;
                 await content.CopyToAsync(output, token).ConfigureAwait(false);
                 await output.FlushAsync(token).ConfigureAwait(false);
                 output.Flush(flushToDisk: true);
             }
             token.ThrowIfCancellationRequested();
+            phase = "open-stage";
             using ProtectedObject candidate = ProtectedObject.TryOpen(staged, mutate: true) ?? throw new FileNotFoundException();
             string? recovery = null;
             if (existing is not null)
@@ -91,9 +94,11 @@ internal static class SmbFileOperations
                 recovery = RecoveryPath(paths, operation);
                 // Move the exact accepted object, retaining its sharing lock. The
                 // publication below never overwrites a newly created destination.
+                phase = "preserve-original";
                 Native.Rename(existing.Handle, recovery);
                 accepted = true;
             }
+            phase = "publish-stage";
             try { Native.Rename(candidate.Handle, destination); }
             catch (NativeFileException)
             {
@@ -116,6 +121,10 @@ internal static class SmbFileOperations
         catch (IOException exception) when (accepted && exception is not SmbRecoveryRequiredException)
         {
             throw new SmbMutationOutcomeAmbiguousException();
+        }
+        catch (Exception exception) when (!accepted && exception is NativeFileException { NativeError: 5 } or UnauthorizedAccessException)
+        {
+            throw new SmbUploadAccessDeniedException(phase, exception);
         }
         finally
         {
@@ -374,6 +383,11 @@ internal sealed class SmbRecoveryRequiredException(string path) : IOException("M
 }
 
 internal sealed class SmbMutationOutcomeAmbiguousException() : IOException("MutationOutcomeAmbiguous");
+
+internal sealed class SmbUploadAccessDeniedException(string phase, Exception inner) : UnauthorizedAccessException("AccessDenied", inner)
+{
+    public string Phase { get; } = phase;
+}
 
 internal sealed class SmbItemReadException(string phase, IOException cause) : IOException("The SMB item read failed.")
 {
