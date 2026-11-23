@@ -26,12 +26,14 @@ public sealed class SmbWorkerAvailabilityTests
         Directory.CreateDirectory(Path.Combine(session.Root, "left", relative.Replace('/', '\\')));
         string file = relative + "/long.txt";
         Assert.IsGreaterThan(260, Path.Combine(session.Root, "left", file).Length);
-        Assert.AreEqual("UploadComplete", (await session.UploadAsync("left", file, "long-path-content"u8.ToArray())).MessageType);
+        AdapterControlFrame upload = await session.UploadAsync("left", file, "long-path-content"u8.ToArray());
+        Assert.AreEqual("UploadComplete", upload.MessageType, GetOperationFailureCode(upload));
         Assert.AreEqual("long-path-content", System.Text.Encoding.UTF8.GetString(await session.ReadRangeAsync("left", file, 17)));
         AdapterControlFrame current = await session.RequestAsync("Stat", new { rootKey = "left", path = file });
         var move = new AdapterOperationRequest(Guid.NewGuid(), "left", file, "left", relative + "/moved.txt",
             new(current.Payload.GetProperty("revision").GetString()));
-        Assert.AreEqual("MutationComplete", (await session.RequestAsync("Move", move)).MessageType);
+        AdapterControlFrame renamed = await session.RequestAsync("Move", move);
+        Assert.AreEqual("MutationComplete", renamed.MessageType, GetOperationFailureCode(renamed));
         Assert.AreEqual("long-path-content", await File.ReadAllTextAsync(Path.Combine(session.Root, "left", relative.Replace('/', '\\'), "moved.txt")));
     }
 
@@ -51,6 +53,9 @@ public sealed class SmbWorkerAvailabilityTests
         finally { await TransitionAsync("-ReconnectLeft"); }
         Assert.AreEqual("StatResult", (await session.RequestAsync("Stat", new { rootKey = "left", path = "same.txt" })).MessageType);
     }
+
+    private static string? GetOperationFailureCode(AdapterControlFrame response) =>
+        response.MessageType == "OperationError" ? response.Payload.GetProperty("code").GetString() : null;
 
     private static async Task TransitionAsync(string transition)
     {
