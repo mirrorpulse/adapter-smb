@@ -2,7 +2,7 @@
 
 This is the official repository for the MirrorPulse SMB Adapter.
 
-The Worker consumes the fixed published SDK 0.2.1 and negotiates protocol v2 over
+The Worker consumes the fixed published SDK 1.0.0-preview.5 and negotiates protocol v2 over
 the current-user Named Pipe. Each enabled root has its own authorized UNC
 `networkPath`. Identical file names, cursors, streams, and stable operation IDs
 remain bound to their root. Disabled roots do not resolve paths, request
@@ -87,7 +87,7 @@ The release workflow runs eighteen actual SMB share/Worker cases on both native
 architectures and verifies production installation, Host-owned credentials,
 Named Pipe routing, CfSharp demand reads and conditional mutations using fixed
 MirrorPulse source `879c9ab1283de75d23e972a335734ea15b2fa291`. It records both source
-commits, the exact published SDK 0.2.1 source and the candidate package hash.
+commits, the exact published SDK 1.0.0-preview.5 source and the candidate package hash.
 Official candidates must pass the product's fixed publisher trust; exported public
 keys authorize only disposable dry-run verification. Previously published v1
 assets remain available until a reviewed stable v2 release supersedes `latest`.

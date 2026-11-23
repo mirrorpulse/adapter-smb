@@ -1,0 +1,10 @@
+{
+  "adapter.title": "SMB network share",
+  "adapter.description": "Sync files from a Windows or compatible network share.",
+  "adapter.setup": "Network share",
+  "adapter.instructions": "Enter the UNC folder path. Leave credentials empty to use the current Windows account.",
+  "field.networkPath": "Network folder path",
+  "field.username": "Username",
+  "field.domain": "Windows domain",
+  "field.password": "Password"
+}
