@@ -95,16 +95,16 @@ internal static class SmbFileOperations
                 // Move the exact accepted object, retaining its sharing lock. The
                 // publication below never overwrites a newly created destination.
                 phase = "preserve-original";
-                Native.Rename(existing.Handle, recovery);
+                Native.Rename(existing.Handle, recovery, parents);
                 accepted = true;
             }
             phase = "publish-stage";
-            try { Native.Rename(candidate.Handle, destination); }
+            try { Native.Rename(candidate.Handle, destination, parents); }
             catch (NativeFileException)
             {
                 if (recovery is not null)
                 {
-                    try { Native.Rename(existing!.Handle, destination); accepted = false; }
+                    try { Native.Rename(existing!.Handle, destination, parents); accepted = false; }
                     catch (NativeFileException) { throw RecoveryRequired(paths, recovery); }
                 }
                 throw;
@@ -173,7 +173,7 @@ internal static class SmbFileOperations
         if (type != "Move" || destinationPaths is null) throw new InvalidDataException("CapabilityUnavailable");
         string destination = destinationPaths.Resolve(operation.DestinationPath!);
         using var destinationParents = new DirectoryLease(Path.GetDirectoryName(destination)!);
-        Native.Rename(item.Handle, destination);
+        Native.Rename(item.Handle, destination, destinationParents);
         try { return await item.RevisionAsync(token).ConfigureAwait(false); }
         catch (IOException) { throw new SmbMutationOutcomeAmbiguousException(); }
     }
@@ -181,6 +181,8 @@ internal static class SmbFileOperations
     private sealed class DirectoryLease : IDisposable
     {
         private readonly List<SafeFileHandle> _handles = [];
+
+        public SafeFileHandle DirectoryHandle => _handles[^1];
 
         public DirectoryLease(string path)
         {
@@ -286,15 +288,25 @@ internal static class SmbFileOperations
             return information;
         }
 
-        public static void Rename(SafeFileHandle handle, string destination)
+        public static void Rename(SafeFileHandle handle, string destination, DirectoryLease destinationParents)
         {
-            byte[] name = Encoding.Unicode.GetBytes(ExtendedPath(destination));
+            // The Windows SMB redirector can reject a long absolute rename target.
+            // Resolve the leaf relative to the same protected destination directory.
+            const int legacyPathLimit = 260;
+            SafeFileHandle? root = destination.Length >= legacyPathLimit ? destinationParents.DirectoryHandle : null;
+            byte[] name = Encoding.Unicode.GetBytes(root is null ? ExtendedPath(destination) : Path.GetFileName(destination));
             int nameOffset = IntPtr.Size * 2 + 4;
             byte[] buffer = new byte[checked(nameOffset + name.Length + sizeof(char))];
             // FILE_RENAME_INFO requires a UTF-16 terminator outside FileNameLength.
+            if (root is not null)
+            {
+                IntPtr directoryHandle = root.DangerousGetHandle();
+                MemoryMarshal.Write(buffer.AsSpan(IntPtr.Size), in directoryHandle);
+            }
             BitConverter.GetBytes(name.Length).CopyTo(buffer, IntPtr.Size * 2);
             name.CopyTo(buffer, nameOffset);
             if (!SetFileInformationByHandle(handle, 3, buffer, checked((uint)buffer.Length))) throw MutationFailure();
+            GC.KeepAlive(root);
         }
 
         public static void Delete(SafeFileHandle handle)
