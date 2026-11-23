@@ -280,8 +280,8 @@ internal static class SmbFileOperations
         {
             byte[] name = Encoding.Unicode.GetBytes(ExtendedPath(destination));
             int nameOffset = IntPtr.Size * 2 + 4;
-            byte[] buffer = new byte[checked(nameOffset + name.Length)];
-            // FILE_RENAME_INFO_EX layout is shared by x64 and ARM64.
+            byte[] buffer = new byte[checked(nameOffset + name.Length + sizeof(char))];
+            // FILE_RENAME_INFO requires a UTF-16 terminator outside FileNameLength.
             BitConverter.GetBytes(name.Length).CopyTo(buffer, IntPtr.Size * 2);
             name.CopyTo(buffer, nameOffset);
             if (!SetFileInformationByHandle(handle, 3, buffer, checked((uint)buffer.Length))) throw MutationFailure();
