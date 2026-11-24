@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "packageId": "MirrorPulse.Adapter.Sdk",
-  "version": "1.0.0-preview.5",
-  "tag": "sdk-v1.0.0-preview.5",
-  "sourceSha": "47b000bd7131270654bfc7d5b797fac4a40be2cf",
-  "asset": "MirrorPulse.Adapter.Sdk.1.0.0-preview.5.nupkg",
-  "length": 85486,
-  "sha256": "ef451cb7332c6ada385279db1125a1eb8ff0891b637a79a39d134b29821f373d"
+  "version": "1.0.0",
+  "tag": "sdk-v1.0.0",
+  "sourceSha": "37212939bdd1ab3158d5454802575844d057b86b",
+  "asset": "MirrorPulse.Adapter.Sdk.1.0.0.nupkg",
+  "length": 86822,
+  "sha256": "3f028022b658e7946450d4790d38a96ea0d109c68d8654157c5b2f373ee4fe5f"
 }
