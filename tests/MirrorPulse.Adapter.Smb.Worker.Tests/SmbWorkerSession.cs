@@ -79,7 +79,8 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
     public List<string> CredentialRoots { get; } = [];
     public AdapterControlFrame? StartupFrame { get; private set; }
 
-    public static async Task<SmbWorkerSession> StartAsync(bool currentIdentity = false, bool wrongShare = false, bool shareRoot = false, bool privatePayload = false)
+    public static async Task<SmbWorkerSession> StartAsync(bool currentIdentity = false, bool wrongShare = false, bool shareRoot = false,
+        bool privatePayload = false, bool signedForm = false)
     {
         string backing = FixtureValue("BACKING");
         string directory = "mp-smb-v2-" + Guid.NewGuid().ToString("N");
@@ -118,7 +119,20 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
                 new("right", true, RootConfiguration("right")),
                 new("offline", false, new Dictionary<string, string> { ["networkPath"] = "invalid-path",
                     ["username"] = "invalid\0identity", ["credentialReference"] = "must-not-be-requested" })];
-            await session.SendAsync("Ready", hello.RequestId, new AdapterReady(2, AdapterHandshake.V2Capabilities, roots, new Dictionary<string, string>()), response: true);
+            if (signedForm)
+            {
+                await session.SendAsync("Ready", hello.RequestId, new
+                {
+                    selectedVersion = 2,
+                    capabilities = AdapterHandshake.V2Capabilities,
+                    roots = new[] { roots[0] },
+                    configuration = new Dictionary<string, string>(),
+                    credentialBindings = new Dictionary<string, string> { ["password"] = "form-credential" },
+                }, response: true);
+            }
+            else
+                await session.SendAsync("Ready", hello.RequestId,
+                    new AdapterReady(2, AdapterHandshake.V2Capabilities, roots, new Dictionary<string, string>()), response: true);
             session._protocol = 2;
             AdapterControlFrame connected;
             while ((connected = await session.ReadAsync()).MessageType == "CredentialRequest")
@@ -127,7 +141,7 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
                 Assert.IsTrue(key is "left" or "right");
                 Assert.DoesNotContain(key, session.CredentialRoots);
                 string reference = connected.Payload.GetProperty("referenceId").GetString()!;
-                Assert.AreEqual("smb-" + key, reference);
+                Assert.AreEqual(signedForm ? "form-credential" : "smb-" + key, reference);
                 session.CredentialRoots.Add(key);
                 await session.SendAsync("CredentialResponse", connected.RequestId,
                     new { referenceId = reference, secret = FixtureValue(key.ToUpperInvariant() + "_PASSWORD") }, response: true);
@@ -189,7 +203,7 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
     }
 
     public async Task<AdapterControlFrame> UploadAsync(string root, string path, byte[] content, Guid? operation = null,
-        AdapterMutationPreconditions? preconditions = null)
+        AdapterMutationPreconditions? preconditions = null, bool requireAdmission = false)
     {
         Guid request = Guid.NewGuid();
         Guid stream = Guid.NewGuid();
@@ -203,6 +217,8 @@ internal sealed class SmbWorkerSession : IAsyncDisposable
             preconditions = preconditions ?? new AdapterMutationPreconditions()
         });
         AdapterControlFrame ready = await ReadAsync();
+        if (requireAdmission && ready.MessageType == "OperationError")
+            Assert.Fail($"Upload admission failed: {ready.Payload.GetProperty("code").GetString()}");
         if (ready.MessageType == "OperationError") return ready;
         Assert.AreEqual("UploadReady", ready.MessageType);
         int offset = 0;

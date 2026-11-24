@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<form version="1">
+    <heading textKey="adapter.setup" />
+    <paragraph textKey="adapter.instructions" />
+    <text key="networkPath" labelKey="field.networkPath" required="true" />
+    <text key="username" labelKey="field.username" required="false" />
+    <text key="domain" labelKey="field.domain" required="false" />
+    <password key="password" labelKey="field.password" required="false" />
+</form>

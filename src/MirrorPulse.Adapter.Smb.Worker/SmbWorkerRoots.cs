@@ -10,9 +10,11 @@ internal sealed class SmbWorkerRoots : IDisposable
 {
     private readonly Dictionary<string, SmbWorkerPaths?> _roots = new(StringComparer.Ordinal);
 
-    public static async Task<SmbWorkerRoots> CreateAsync(AdapterReady ready, AdapterControlChannel channel, CancellationToken token)
+    public static async Task<SmbWorkerRoots> CreateAsync(AdapterReady ready, IReadOnlyDictionary<string, string>? credentialBindings,
+        AdapterControlChannel channel, CancellationToken token)
     {
-        if (ready.Roots.Count is < 1 or > 64) throw new InvalidDataException("InvalidRoots");
+        if (ready.Roots.Count is < 1 or > 64 || (credentialBindings is not null && ready.Roots.Count != 1))
+            throw new InvalidDataException("InvalidRoots");
         var roots = new SmbWorkerRoots();
         try
         {
@@ -24,7 +26,11 @@ internal sealed class SmbWorkerRoots : IDisposable
                 SafeAccessTokenHandle? identity = null;
                 try
                 {
-                    if (binding.Configuration.GetValueOrDefault("credentialReference") is { Length: > 0 } reference)
+                    string? reference = credentialBindings is null ? binding.Configuration.GetValueOrDefault("credentialReference")
+                        : credentialBindings.GetValueOrDefault("password");
+                    if (credentialBindings is not null && !string.IsNullOrWhiteSpace(binding.Configuration.GetValueOrDefault("username")) &&
+                        string.IsNullOrEmpty(reference)) throw new InvalidDataException("CredentialRequired");
+                    if (!string.IsNullOrEmpty(reference))
                     {
                         string username = binding.Configuration.GetValueOrDefault("username") ?? throw new InvalidDataException("UsernameRequired");
                         string? domain = binding.Configuration.GetValueOrDefault("domain");
