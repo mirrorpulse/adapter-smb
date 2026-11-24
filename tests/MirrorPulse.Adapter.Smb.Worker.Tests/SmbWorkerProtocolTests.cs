@@ -10,6 +10,14 @@ public sealed class SmbWorkerProtocolTests
     private static readonly string[] EnabledCredentialRoots = ["left", "right"];
 
     [TestMethod]
+    public async Task ADeploymentUsesTheNamedPasswordBindingInsteadOfTheRootReference()
+    {
+        await using var session = await SmbWorkerSession.StartAsync(signedForm: true);
+        Assert.AreEqual("left", session.CredentialRoots.Single());
+        Assert.AreEqual("left", Encoding.UTF8.GetString(await session.ReadRangeAsync("left", "same.txt", 4)));
+    }
+
+    [TestMethod]
     public async Task AStaleReadRevisionIsRejectedBeforeAnyContentFrame()
     {
         await using var session = await SmbWorkerSession.StartAsync();

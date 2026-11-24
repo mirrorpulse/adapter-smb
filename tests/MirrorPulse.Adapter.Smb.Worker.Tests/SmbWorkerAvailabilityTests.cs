@@ -26,12 +26,20 @@ public sealed class SmbWorkerAvailabilityTests
         Directory.CreateDirectory(Path.Combine(session.Root, "left", relative.Replace('/', '\\')));
         string file = relative + "/long.txt";
         Assert.IsGreaterThan(260, Path.Combine(session.Root, "left", file).Length);
-        Assert.AreEqual("UploadComplete", (await session.UploadAsync("left", file, "long-path-content"u8.ToArray())).MessageType);
+        AdapterControlFrame parent = await session.RequestAsync("Stat", new { rootKey = "left", path = relative });
+        Assert.AreEqual("StatResult", parent.MessageType, GetOperationFailureCode(parent));
+        StringAssert.StartsWith(parent.Payload.GetProperty("revision").GetString(), "directory:");
+        AdapterControlFrame absent = await session.RequestAsync("Stat", new { rootKey = "left", path = file });
+        Assert.AreEqual("StatResult", absent.MessageType, GetOperationFailureCode(absent));
+        Assert.IsNull(absent.Payload.GetProperty("revision").GetString());
+        AdapterControlFrame upload = await session.UploadAsync("left", file, "long-path-content"u8.ToArray(), requireAdmission: true);
+        Assert.AreEqual("UploadComplete", upload.MessageType, $"Upload completion failed: {GetOperationFailureCode(upload)}");
         Assert.AreEqual("long-path-content", System.Text.Encoding.UTF8.GetString(await session.ReadRangeAsync("left", file, 17)));
         AdapterControlFrame current = await session.RequestAsync("Stat", new { rootKey = "left", path = file });
         var move = new AdapterOperationRequest(Guid.NewGuid(), "left", file, "left", relative + "/moved.txt",
             new(current.Payload.GetProperty("revision").GetString()));
-        Assert.AreEqual("MutationComplete", (await session.RequestAsync("Move", move)).MessageType);
+        AdapterControlFrame renamed = await session.RequestAsync("Move", move);
+        Assert.AreEqual("MutationComplete", renamed.MessageType, GetOperationFailureCode(renamed));
         Assert.AreEqual("long-path-content", await File.ReadAllTextAsync(Path.Combine(session.Root, "left", relative.Replace('/', '\\'), "moved.txt")));
     }
 
@@ -50,6 +58,14 @@ public sealed class SmbWorkerAvailabilityTests
         }
         finally { await TransitionAsync("-ReconnectLeft"); }
         Assert.AreEqual("StatResult", (await session.RequestAsync("Stat", new { rootKey = "left", path = "same.txt" })).MessageType);
+    }
+
+    private static string? GetOperationFailureCode(AdapterControlFrame response)
+    {
+        if (response.MessageType != "OperationError") return null;
+        string? code = response.Payload.GetProperty("code").GetString();
+        return response.Payload.TryGetProperty("uploadPhase", out var phase) && phase.GetString() is { } value
+            ? $"{code} ({value})" : code;
     }
 
     private static async Task TransitionAsync(string transition)

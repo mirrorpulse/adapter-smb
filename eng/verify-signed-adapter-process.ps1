@@ -31,7 +31,7 @@ try {
     Push-Location $product
     try {
         $productSha = (& git rev-parse HEAD | Out-String).Trim()
-        if ($productSha -cne '879c9ab1283de75d23e972a335734ea15b2fa291') { throw 'The product verifier source differs from its fixed contract.' }
+        if ($productSha -cne '447e4b1cc981066f3c878287585cc3a38cac69cd') { throw 'The product verifier source differs from its fixed contract.' }
         & pwsh -NoProfile -File eng/restore-adapter-sdk.ps1
         if ($LASTEXITCODE -ne 0) { throw 'Pinned product SDK verification failed.' }
         & dotnet restore tests/MirrorPulse.Core.Tests/MirrorPulse.Core.Tests.csproj --locked-mode --packages artifacts/provider-process-packages
@@ -45,7 +45,7 @@ try {
         [ordered]@{ schemaVersion = 1; adapterSourceSha = $SourceSha; mirrorPulseSourceSha = $productSha;
             runtime = $runtime; sdkVersion = '0.2.1'; sdkSourceSha = 'ce74cd358de148f148ce89ffc8478f6fe1920281';
             version = $metadata.version; packageSha256 = $packageRecord.sha256; packageLength = $packageRecord.length;
-            smbConformanceCases = 18; productCases = 1; privateRuntimeVerified = $true;
+            smbConformanceCases = 19; productCases = 1; privateRuntimeVerified = $true;
             officialTrustVerified = [bool]$metadata.publish; published = $false
         } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $results 'smb-v2-evidence.json') -Encoding utf8
     } finally { Pop-Location }
